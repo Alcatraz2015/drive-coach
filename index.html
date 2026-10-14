@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0E6B3F">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Drive Coach</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Overpass:wght@600;800;900&family=Overpass+Mono:wght@500;700&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+/* Layout: live map on top, a road-sign-styled bottom sheet with four tabs (Drive / Routes / Skills / Log). */
+:root{
+  --bg:#EEF2EE; --surface:#FFFFFF; --surface2:#E3EAE4; --fg:#14211A; --muted:#5B6B61; --line:#CBD6CD;
+  --sign:#0E6B3F; --sign-ink:#FFFFFF; --caution:#E8A900; --caution-ink:#1D1600; --stop:#C8102E; --ok:#1F8A4C;
+  --display:"Overpass","Highway Gothic","Arial Narrow",sans-serif;
+  --body:"Atkinson Hyperlegible",system-ui,-apple-system,sans-serif;
+  --mono:"Overpass Mono",ui-monospace,Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0E1411; --surface:#17201B; --surface2:#202C25; --fg:#E5EDE8; --muted:#94A69B; --line:#2C3A32;
+  --sign:#2FA566; --sign-ink:#04130A; --caution:#F2C53D; --caution-ink:#1D1600; --stop:#F0546A; --ok:#45C27A; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0E1411; --surface:#17201B; --surface2:#202C25; --fg:#E5EDE8; --muted:#94A69B; --line:#2C3A32;
+  --sign:#2FA566; --sign-ink:#04130A; --caution:#F2C53D; --caution-ink:#1D1600; --stop:#F0546A; --ok:#45C27A; color-scheme:dark}
+
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font:16px/1.45 var(--body);-webkit-tap-highlight-color:transparent;overflow:hidden}
+button,input,textarea,select{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:3px solid var(--caution);outline-offset:2px}
+.app{height:100%;display:grid;grid-template-rows:minmax(200px,1fr) auto}
+#map{position:relative;z-index:0;background:var(--surface2)}
+.leaflet-container{font-family:var(--body);background:var(--surface2)}
+
+/* floating map controls */
+.fab{position:absolute;z-index:500;right:calc(12px + env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:8px;top:calc(12px + env(safe-area-inset-top,0px))}
+.fab button{width:46px;height:46px;border-radius:12px;border:1px solid var(--line);background:var(--surface);display:grid;place-items:center;box-shadow:0 2px 8px rgb(0 0 0/.18)}
+.fab button[aria-pressed="true"]{background:var(--sign);color:var(--sign-ink);border-color:var(--sign)}
+.fab svg{width:22px;height:22px}
+.banner{position:absolute;z-index:500;left:calc(12px + env(safe-area-inset-left,0px));top:calc(12px + env(safe-area-inset-top,0px));right:70px;
+  background:var(--caution);color:var(--caution-ink);font:800 14px/1.2 var(--display);letter-spacing:.04em;text-transform:uppercase;padding:10px 12px;border-radius:8px;border:2px solid var(--caution-ink)}
+
+/* sheet */
+.sheet{background:var(--surface);border-top:1px solid var(--line);max-height:58vh;display:flex;flex-direction:column;
+  padding-bottom:env(safe-area-inset-bottom,0px);box-shadow:0 -6px 20px rgb(0 0 0/.12)}
+.tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:8px max(12px,env(safe-area-inset-right,0px)) 0 max(12px,env(safe-area-inset-left,0px))}
+.tabs button{border:0;background:none;padding:8px 4px 10px;font:800 13px/1 var(--display);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);border-bottom:3px solid transparent}
+.tabs button[aria-selected="true"]{color:var(--fg);border-bottom-color:var(--sign)}
+.pane{overflow-y:auto;padding-block:14px 18px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:14px}
+
+h2{font:900 22px/1.1 var(--display);margin:0;text-wrap:balance;letter-spacing:.01em}
+h3{font:800 13px/1.2 var(--display);margin:0;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}
+.muted{color:var(--muted)}
+.small{font-size:14px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.stack{display:flex;flex-direction:column;gap:8px}
+
+.btn{border:1px solid var(--line);background:var(--surface2);border-radius:10px;padding:10px 14px;font-weight:700}
+.btn.primary{background:var(--sign);color:var(--sign-ink);border-color:var(--sign)}
+.btn.big{width:100%;padding:16px;font:900 20px/1 var(--display);letter-spacing:.06em;text-transform:uppercase;border-radius:12px}
+.btn.danger{color:var(--stop);border-color:var(--stop);background:transparent}
+.btn.stopbtn{background:var(--stop);border-color:var(--stop);color:#fff}
+a.btn{text-decoration:none;display:inline-block;color:var(--fg)}
+
+/* route sign plate */
+.plate{background:var(--sign);color:var(--sign-ink);border-radius:10px;padding:12px 14px;border:2px solid var(--sign);box-shadow:inset 0 0 0 2px var(--surface)}
+.plate .k{font:800 12px/1 var(--display);letter-spacing:.12em;text-transform:uppercase;opacity:.85}
+.plate .n{font:900 24px/1.1 var(--display);margin-top:4px}
+.plate .g{font-size:14px;margin-top:4px;opacity:.95}
+
+.cps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.cps li{display:grid;grid-template-columns:30px 1fr auto;gap:10px;align-items:start;padding:10px 0;border-bottom:1px solid var(--line)}
+.cps li:last-child{border-bottom:0}
+.num{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font:800 14px/1 var(--mono);background:var(--surface2);border:2px solid var(--line)}
+.num.placed{background:var(--caution);color:var(--caution-ink);border-color:var(--caution-ink)}
+.num.done{background:var(--ok);color:#fff;border-color:var(--ok)}
+.cp-name{font-weight:700}
+.cp-task{font-size:14px;color:var(--muted)}
+
+/* HUD */
+.hud{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:8px}
+.gauge{background:var(--surface2);border-radius:10px;padding:10px 12px;min-width:0}
+.gauge .v{font:700 30px/1 var(--mono);font-variant-numeric:tabular-nums}
+.gauge.speed .v{font-size:44px}
+.gauge .u{font:800 11px/1 var(--display);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-top:6px}
+.next{border:2px solid var(--caution);border-radius:12px;padding:12px;display:grid;grid-template-columns:1fr auto;gap:6px 10px;align-items:center}
+.next .d{font:700 22px/1 var(--mono);font-variant-numeric:tabular-nums}
+.next .t{grid-column:1/-1;font-size:15px}
+.progressbar{height:8px;background:var(--surface2);border-radius:99px;overflow:hidden}
+.progressbar i{display:block;height:100%;background:var(--sign)}
+
+/* skills */
+.skillgroup{display:flex;flex-direction:column}
+.skill{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line)}
+.lvl{display:flex;gap:3px}
+.lvl button{width:30px;height:30px;border-radius:6px;border:1px solid var(--line);background:var(--surface2);padding:0}
+.lvl button.on{background:var(--sign);border-color:var(--sign)}
+.lvlname{font:800 11px/1 var(--display);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:right;margin-top:4px}
+
+/* log */
+.sum{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.entry{border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--surface);text-align:left;width:100%}
+.entry .top{display:flex;justify-content:space-between;gap:8px;font-weight:700}
+.entry .meta{font:500 13px/1.3 var(--mono);color:var(--muted);margin-top:4px}
+.entry .note{margin-top:6px;font-size:14px}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);background:var(--surface2);border-radius:99px;padding:7px 12px;font-weight:700;font-size:14px}
+.chip[aria-pressed="true"]{background:var(--sign);color:var(--sign-ink);border-color:var(--sign)}
+input[type=text],textarea,select{width:100%;border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:9px 10px}
+textarea{min-height:76px;resize:vertical}
+.cp-edit{display:grid;gap:6px;min-width:0}
+.cp-edit input{padding:7px 9px;font-size:15px}
+.iconbtn{border:0;background:none;color:var(--muted);padding:6px;font-size:20px;line-height:1}
+.empty{border:2px dashed var(--line);border-radius:12px;padding:18px;text-align:center;color:var(--muted)}
+.toast{position:fixed;z-index:1000;left:50%;transform:translateX(-50%);top:calc(14px + env(safe-area-inset-top,0px));background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:10px;font-weight:700;max-width:calc(100% - 32px);box-shadow:0 4px 16px rgb(0 0 0/.25)}
+
+/* map markers */
+.pin{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font:800 14px/1 var(--mono);
+  background:var(--caution);color:var(--caution-ink);border:3px solid var(--caution-ink);box-shadow:0 2px 6px rgb(0 0 0/.35)}
+.pin.done{background:var(--ok);color:#fff;border-color:#fff}
+.pin.next{animation:pulse 1.4s ease-in-out infinite}
+.car{width:40px;height:40px;display:grid;place-items:center}
+.car svg{width:40px;height:40px;filter:drop-shadow(0 2px 3px rgb(0 0 0/.4))}
+.flag{width:22px;height:22px;border-radius:4px;background:var(--stop);color:#fff;display:grid;place-items:center;font:900 14px/1 var(--display);border:2px solid #fff}
+@keyframes pulse{50%{box-shadow:0 0 0 10px rgb(232 169 0/.25)}}
+@media (prefers-reduced-motion:reduce){.pin.next{animation:none}}
+@media (min-width:900px){.app{grid-template-rows:1fr;grid-template-columns:1fr 420px}.sheet{max-height:none;border-top:0;border-left:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<div class="app">
+  <div id="map">
+    <div class="banner" id="placeBanner" hidden>Tap the map to drop checkpoint pins</div>
+    <div class="fab">
+      <button id="locBtn" aria-pressed="false" aria-label="Follow my location" title="Follow my location">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+      </button>
+      <button id="fitBtn" aria-label="Show whole route" title="Show whole route">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+      </button>
+    </div>
+  </div>
+  <section class="sheet">
+    <div class="tabs" role="tablist">
+      <button role="tab" data-tab="drive" aria-selected="true">Drive</button>
+      <button role="tab" data-tab="routes" aria-selected="false">Routes</button>
+      <button role="tab" data-tab="skills" aria-selected="false">Skills</button>
+      <button role="tab" data-tab="log" aria-selected="false">Log</button>
+    </div>
+    <div class="pane" id="pane"></div>
+  </section>
+</div>
+<input type="file" id="importFile" accept="application/json" hidden>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const KEY='driveCoach.v1';
+const HOME=[50.900,-113.925]; // Mahogany, SE Calgary
+const ARRIVE_M=35;
+const LEVELS=['Not yet','Learning','With help','Solid'];
+const SKILLS=[
+ ['Car basics',[['controls','Seat, mirrors & controls check'],['startstop','Smooth starts & stops'],['steer','Steering & hand position'],['reverse','Reversing in a straight line']]],
+ ['Turns & intersections',[['rturn','Right turns'],['lturn','Left turns'],['stops','Full stop behind the line'],['fourway','Right-of-way at 4-way stops'],['unprot','Unprotected left turns'],['amber','Amber light decisions']]],
+ ['Lanes & traffic',[['shoulder','Shoulder checks'],['lanechg','Lane changes'],['following','Following distance (2–3 s)'],['speed','Holding the limit'],['zones','School & playground zones (30)']]],
+ ['Bigger roads',[['round','Roundabouts'],['merge','Highway merge'],['exit','Highway exit'],['night','Driving after dark'],['winter','Snow & ice handling']]],
+ ['Parking',[['stall','Stall parking (forward & reverse)'],['parallel','Parallel parking'],['hill','Hill parking, wheels turned'],['threept','Three-point turn']]]
+];
+const TEMPLATES=[
+ {name:'Empty lot basics',stage:'Stage 1',goal:'A big empty lot near Mahogany: the Mahogany Village Market lot or a Seton lot before 8 am. No traffic, just the car.',
+  cps:[['Lot entrance','Seat, mirrors, belt. Find gas, brake, signals, wipers, lights.'],['Straight run','Creep forward, stop smoothly. Repeat until stops feel gentle.'],['Wide loop','Circle the lot both ways. Hand-over-hand steering.'],['Stall row','Park forward into a stall, centred. Then reverse out.'],['Far corner','Reverse in a straight line 5 stalls, looking over shoulder.']]},
+ {name:'Quiet neighbourhood',stage:'Stage 2',goal:'Inside Mahogany: the quiet crescents off Mahogany Blvd SE, stop signs and the playground zones around the lake parks.',
+  cps:[['First stop sign','Full stop behind the line, count 2, look L-R-L.'],['Right turn','Signal early, slow before the turn, finish in the right lane.'],['Left turn','Signal, check oncoming, turn into the nearest lane.'],['Playground zone','Hold 30. Watch for kids between parked cars.'],['4-way stop','Who arrived first goes first. Tie: yield to the right.'],['Back home','Park at the curb, wheels within 30 cm.']]},
+ {name:'Traffic lights & lanes',stage:'Stage 3',goal:'52 St SE and Seton Blvd SE: signals, two lanes each way, steady traffic.',
+  cps:[['First signal','Approach a stale green ready to stop.'],['Lane change','Mirror, signal, shoulder check, move. Cancel the signal.'],['Left on green','Wait in the intersection only if safe; turn when clear.'],['Right on red','Full stop first, then yield to everyone.'],['Busy stretch','Keep 2–3 s following distance. Count it out loud.']]},
+ {name:'Roundabouts',stage:'Stage 4',goal:'Nearest roundabouts to Mahogany and Seton. Single lane first, then double.',
+  cps:[['Approach','Slow early, pick the lane by exit before you arrive.'],['Yield line','Yield to traffic already inside, look left.'],['Exit','Signal right before your exit, check the bike lane.']]},
+ {name:'Highway merge',stage:'Stage 5',goal:'Stoney Trail from the 52 St SE ramp, one exit and back. Only when stages 1–3 feel solid.',
+  cps:[['On-ramp','Get up to highway speed on the ramp.'],['Merge point','Mirror, signal, shoulder check, find the gap, go.'],['Cruise','Hold the limit in the right lane. Scan far ahead.'],['Exit ramp','Signal early, slow down on the ramp, not on the highway.']]},
+ {name:'Road test run',stage:'Stage 6',goal:'A full loop through Mahogany and Seton like the real test. You stay quiet, she drives.',
+  cps:[['Pre-trip','Explain the controls out loud.'],['Parallel park','Within 30 cm of the curb, no more than 3 corrections.'],['Hill park','Wheels turned the right way, parking brake on.'],['Three-point turn','Signal, check both ways, finish in the right lane.'],['Mixed drive','Lights, school zone, lane change, finish back at start.']]}
+];
+
+const uid=()=>Math.random().toString(36).slice(2,9);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function seed(){
+  const routes=TEMPLATES.map(t=>({id:uid(),name:t.name,stage:t.stage,goal:t.goal,cps:t.cps.map(([n,k])=>({id:uid(),name:n,task:k,lat:null,lng:null}))}));
+  return {routes,skills:{},sessions:[],activeRouteId:routes[0].id};
+}
+function load(){try{const j=JSON.parse(localStorage.getItem(KEY));if(j&&Array.isArray(j.routes)&&j.routes.length)return j}catch(e){}return seed()}
+let S=load();
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toast('Could not save on this device')}}
+const route=()=>S.routes.find(r=>r.id===S.activeRouteId)||S.routes[0];
+
+function hav(a,b){const R=6371000,t=Math.PI/180,dLa=(b[0]-a[0])*t,dLo=(b[1]-a[1])*t;
+  const h=Math.sin(dLa/2)**2+Math.cos(a[0]*t)*Math.cos(b[0]*t)*Math.sin(dLo/2)**2;return 2*R*Math.asin(Math.sqrt(h))}
+function fmtDur(ms){const s=Math.floor(ms/1000),h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return h?`${h}:${String(m).padStart(2,'0')}:${String(x).padStart(2,'0')}`:`${m}:${String(x).padStart(2,'0')}`}
+function fmtDist(m){return m<1000?Math.round(m)+' m':(m/1000).toFixed(1)+' km'}
+let toastT;function toast(msg){document.querySelector('.toast')?.remove();const d=document.createElement('div');d.className='toast';d.textContent=msg;document.body.appendChild(d);clearTimeout(toastT);toastT=setTimeout(()=>d.remove(),2600)}
+
+/* ---------- map ---------- */
+const map=L.map('map',{zoomControl:false,attributionControl:true}).setView(HOME,14);
+const dark=matchMedia('(prefers-color-scheme: dark)');
+let tiles;
+function setTiles(){tiles&&map.removeLayer(tiles);
+  tiles=L.tileLayer(`https://{s}.basemaps.cartocdn.com/${dark.matches?'dark_all':'rastertiles/voyager'}/{z}/{x}/{y}{r}.png`,
+   {maxZoom:20,subdomains:'abcd',attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map)}
+setTiles();dark.addEventListener?.('change',setTiles);
+const cpLayer=L.layerGroup().addTo(map), histLayer=L.layerGroup().addTo(map), flagLayer=L.layerGroup().addTo(map);
+const trackLine=L.polyline([],{color:'#2F7DE1',weight:5,opacity:.85}).addTo(map);
+let carMarker=null, accCircle=null;
+const carIcon=h=>L.divIcon({className:'',iconSize:[40,40],iconAnchor:[20,20],html:`<div class="car" style="transform:rotate(${h||0}deg)"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="13" fill="#2F7DE1" stroke="#fff" stroke-width="3"/><path d="M20 10l6 14-6-3.5-6 3.5z" fill="#fff"/></svg></div>`});
+
+function drawRoute(){
+  cpLayer.clearLayers();const r=route();const pts=[];const nx=nextCp();
+  r.cps.forEach((c,i)=>{if(c.lat==null)return;pts.push([c.lat,c.lng]);
+    const done=sess&&sess.done.includes(c.id);
+    const m=L.marker([c.lat,c.lng],{draggable:!sess,icon:L.divIcon({className:'',iconSize:[30,30],iconAnchor:[15,15],
+      html:`<div class="pin ${done?'done':''} ${nx&&nx.id===c.id?'next':''}">${i+1}</div>`})})
+     .bindTooltip(esc(c.name),{direction:'top',offset:[0,-14]}).addTo(cpLayer);
+    m.on('dragend',e=>{const p=e.target.getLatLng();c.lat=p.lat;c.lng=p.lng;save();drawRoute()});
+  });
+  if(pts.length>1)L.polyline(pts,{color:dark.matches?'#F2C53D':'#B88600',weight:3,dashArray:'6 8'}).addTo(cpLayer);
+}
+function fitRoute(){const pts=route().cps.filter(c=>c.lat!=null).map(c=>[c.lat,c.lng]);
+  if(sess&&sess.track.length)pts.push(...sess.track);
+  if(pts.length===1)map.setView(pts[0],16);else if(pts.length)map.fitBounds(pts,{padding:[40,40]});else{map.setView(HOME,14);toast('No pins yet. Place them in Routes.')}}
+
+let placing=false;
+map.on('click',e=>{
+  if(!placing)return;const r=route();let c=r.cps.find(c=>c.lat==null);
+  if(!c){c={id:uid(),name:'Checkpoint '+(r.cps.length+1),task:'',lat:null,lng:null};r.cps.push(c)}
+  c.lat=e.latlng.lat;c.lng=e.latlng.lng;save();drawRoute();render();
+  const left=r.cps.filter(c=>c.lat==null).length;
+  toast(left?`Pinned “${c.name}”. ${left} to go.`:`Pinned “${c.name}”. Tap again to add more.`);
+});
+function setPlacing(v){placing=v;document.getElementById('placeBanner').hidden=!v}
+
+/* ---------- location ---------- */
+let watchId=null,follow=false,lastFix=null;
+function ensureWatch(){
+  if(watchId!=null)return true;
+  if(!('geolocation' in navigator)){toast('This browser has no GPS access');return false}
+  if(!isSecureContext){toast('Location needs an https:// link');}
+  watchId=navigator.geolocation.watchPosition(onPos,e=>{toast(e.code===1?'Location blocked. Allow it in browser settings.':'GPS signal lost, retrying…')},
+    {enableHighAccuracy:true,maximumAge:1000,timeout:20000});
+  return true;
+}
+function onPos(p){
+  const {latitude:lat,longitude:lng,accuracy:acc,speed,heading}=p.coords;const ll=[lat,lng];const now=p.timestamp||Date.now();
+  let kmh=speed!=null&&speed>=0?speed*3.6:null, hd=heading;
+  if(lastFix){const d=hav(lastFix.ll,ll),dt=(now-lastFix.t)/1000;
+    if(kmh==null&&dt>0)kmh=d/dt*3.6;
+    if((hd==null||isNaN(hd))&&d>3){const y=Math.sin((lng-lastFix.ll[1])*Math.PI/180)*Math.cos(lat*Math.PI/180);
+      const x=Math.cos(lastFix.ll[0]*Math.PI/180)*Math.sin(lat*Math.PI/180)-Math.sin(lastFix.ll[0]*Math.PI/180)*Math.cos(lat*Math.PI/180)*Math.cos((lng-lastFix.ll[1])*Math.PI/180);
+      hd=(Math.atan2(y,x)*180/Math.PI+360)%360}}
+  if(hd==null||isNaN(hd))hd=lastFix?.hd||0;
+  if(!carMarker){carMarker=L.marker(ll,{icon:carIcon(hd),zIndexOffset:1000,interactive:false}).addTo(map);
+    accCircle=L.circle(ll,{radius:acc,color:'#2F7DE1',weight:1,fillOpacity:.08,interactive:false}).addTo(map);map.setView(ll,16)}
+  else{carMarker.setLatLng(ll);carMarker.setIcon(carIcon(hd));accCircle.setLatLng(ll).setRadius(acc)}
+  if(follow)map.panTo(ll,{animate:true});
+  if(sess&&acc<=40){
+    const prev=sess.track[sess.track.length-1];
+    if(!prev||hav(prev,ll)>=4){if(prev)sess.km+=hav(prev,ll)/1000;sess.track.push(ll);trackLine.addLatLng(ll)}
+    sess.kmh=kmh||0;if(sess.kmh>sess.maxKmh&&sess.kmh<200)sess.maxKmh=sess.kmh;
+    const nx=nextCp();if(nx){sess.nextDist=hav(ll,[nx.lat,nx.lng]);if(sess.nextDist<=ARRIVE_M)markDone(nx,true)}
+  }
+  lastFix={ll,t:now,hd,kmh:kmh||0};
+  if(tab==='drive')updateHud();
+}
+
+/* ---------- session ---------- */
+let sess=null,ending=false,tick=null,wake=null,actx=null;
+function nextCp(){if(!sess)return route().cps.find(c=>c.lat!=null)||null;return route().cps.find(c=>c.lat!=null&&!sess.done.includes(c.id))||null}
+function chime(){try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator(),g=actx.createGain();
+  o.frequency.value=880;g.gain.setValueAtTime(.0001,actx.currentTime);g.gain.exponentialRampToValueAtTime(.3,actx.currentTime+.02);
+  g.gain.exponentialRampToValueAtTime(.0001,actx.currentTime+.5);o.connect(g).connect(actx.destination);o.start();o.stop(actx.currentTime+.5)}catch(e){}
+  navigator.vibrate?.([120,60,120])}
+function markDone(c,auto){if(!sess||sess.done.includes(c.id))return;sess.done.push(c.id);sess.nextDist=null;chime();
+  toast((auto?'Reached ':'Done: ')+c.name);drawRoute();render()}
+async function startSession(){
+  if(!ensureWatch())return;try{actx=actx||new (window.AudioContext||window.webkitAudioContext)()}catch(e){}
+  sess={id:uid(),start:Date.now(),routeId:route().id,track:[],km:0,maxKmh:0,kmh:0,done:[],flags:[],nextDist:null};
+  trackLine.setLatLngs([]);flagLayer.clearLayers();histLayer.clearLayers();setPlacing(false);
+  follow=true;document.getElementById('locBtn').setAttribute('aria-pressed','true');
+  try{wake=await navigator.wakeLock?.request('screen')}catch(e){}
+  tick=setInterval(()=>tab==='drive'&&updateHud(),1000);drawRoute();render();
+}
+function flagMoment(label){if(!sess||!lastFix)return toast('Waiting for GPS…');
+  const f={ll:lastFix.ll,label,t:Date.now()};sess.flags.push(f);
+  L.marker(f.ll,{icon:L.divIcon({className:'',iconSize:[22,22],iconAnchor:[11,11],html:'<div class="flag">!</div>'})}).bindTooltip(esc(label)).addTo(flagLayer);
+  toast('Marked: '+label)}
+function finishSession(keep){
+  if(keep){const r=route();
+    let tr=sess.track;if(tr.length>1500){const k=Math.ceil(tr.length/1500);tr=tr.filter((_,i)=>i%k===0)}
+    S.sessions.unshift({id:sess.id,start:sess.start,end:Date.now(),routeId:r.id,routeName:r.name,km:+sess.km.toFixed(2),maxKmh:Math.round(sess.maxKmh),
+      done:sess.done.length,total:r.cps.filter(c=>c.lat!=null).length,feel:endForm.feel,notes:endForm.notes.trim(),
+      track:tr.map(p=>[+p[0].toFixed(5),+p[1].toFixed(5)]),flags:sess.flags.map(f=>({ll:[+f.ll[0].toFixed(5),+f.ll[1].toFixed(5)],label:f.label,t:f.t})),
+      cps:r.cps.map((c,i)=>({n:i+1,name:c.name,task:c.task,done:sess.done.includes(c.id),ll:c.lat!=null?[+c.lat.toFixed(5),+c.lng.toFixed(5)]:null})).filter(c=>c.ll)});
+    reportView=sess.id;
+    save();toast('Lesson saved to the log')}
+  clearInterval(tick);try{wake?.release()}catch(e){}wake=null;sess=null;ending=false;endForm={feel:0,notes:''};
+  trackLine.setLatLngs([]);flagLayer.clearLayers();drawRoute();render();
+}
+let endForm={feel:0,notes:''};
+
+/* ---------- lesson report (PNG / PDF) ---------- */
+const FLAGS={
+ 'Hard brake':{skill:'startstop',tip:'Look further ahead and start braking earlier and lighter. Stop like there is a coffee on the dash.'},
+ 'Late signal':{skill:'lanechg',tip:'Signal 3–5 seconds before every turn and lane change, then make sure it cancels.'},
+ 'Missed shoulder check':{skill:'shoulder',tip:'Mirror, signal, shoulder check, go. Every lane change and every turn across a bike lane.'},
+ 'Too fast':{skill:'speed',tip:'Glance at the speedometer every block. Calgary residential streets are 40 km/h, playground zones 30.'},
+ 'Rolled the stop':{skill:'stops',tip:'Stop fully behind the line, count one-one-thousand, then look left, right, left.'},
+ 'Wide turn':{skill:'rturn',tip:'Slow down before the turn, look where you want to go, and finish in the nearest lane.'},
+ 'Drifting in lane':{skill:'steer',tip:'Eyes far down the lane, not on the hood. Small, early corrections.'},
+ 'Nice job':{good:true}
+};
+const FEEL=['','Rough','Nervous','Okay','Good','Great'];
+let reportView=null; const reportCache={};
+const RC={bg:'#F6F8F6',ink:'#14211A',muted:'#5B6B61',line:'#D5DED7',sign:'#0E6B3F',caution:'#E8A900',stop:'#C8102E',ok:'#1F8A4C',track:'#2F7DE1',panel:'#FFFFFF'};
+const fnt=(w,s,f)=>`${w} ${s}px ${f==='d'?'Overpass, Arial Narrow, sans-serif':f==='m'?'"Overpass Mono", Menlo, monospace':'"Atkinson Hyperlegible", Arial, sans-serif'}`;
+function loadImg(src){return new Promise((res,rej)=>{const i=new Image();i.crossOrigin='anonymous';i.onload=()=>res(i);i.onerror=rej;i.src=src})}
+function wpx(ll,z){const n=256*2**z,s=Math.sin(ll[0]*Math.PI/180);return[(ll[1]+180)/360*n,(0.5-Math.log((1+s)/(1-s))/(4*Math.PI))*n]}
+function wrap(ctx,text,x,y,maxW,lh){const words=String(text).split(/\s+/);let line='';
+  for(const w of words){const t=line?line+' '+w:w;if(ctx.measureText(t).width>maxW&&line){ctx.fillText(line,x,y);y+=lh;line=w}else line=t}
+  if(line){ctx.fillText(line,x,y);y+=lh}return y}
+function rrect(ctx,x,y,w,h,r){ctx.beginPath();ctx.roundRect?ctx.roundRect(x,y,w,h,r):ctx.rect(x,y,w,h)}
+function pinDot(ctx,x,y,label,fill,ink,r=17){ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.fillStyle=fill;ctx.fill();ctx.lineWidth=4;ctx.strokeStyle='#fff';ctx.stroke();
+  ctx.fillStyle=ink;ctx.font=fnt(700,16,'m');ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(label,x,y+1);ctx.textAlign='left';ctx.textBaseline='alphabetic'}
+
+async function buildReport(s,tilesOn=true){
+  try{await document.fonts?.ready}catch(e){}
+  const W=1080,P=48,cv=document.createElement('canvas');cv.width=W;cv.height=4200;const c=cv.getContext('2d');
+  c.fillStyle=RC.bg;c.fillRect(0,0,W,cv.height);
+  const cps=s.cps||[], flags=(s.flags||[]).map((f,i)=>({...f,i:i+1})), bad=flags.filter(f=>!FLAGS[f.label]?.good), good=flags.filter(f=>FLAGS[f.label]?.good);
+  // header
+  c.fillStyle=RC.sign;c.fillRect(0,0,W,210);c.strokeStyle='#fff';c.lineWidth=4;rrect(c,14,14,W-28,182,14);c.stroke();
+  c.fillStyle='#fff';c.font=fnt(800,20,'d');c.fillText('DRIVE COACH · LESSON REPORT',P,64);
+  c.font=fnt(900,52,'d');c.fillText(s.routeName||'Lesson',P,128);
+  const d=new Date(s.start);c.font=fnt(400,24,'b');
+  c.fillText(`${d.toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric',year:'numeric'})} · ${d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})}`,P,172);
+  let y=244;
+  // stats
+  const st=[[fmtDur(s.end-s.start),'TIME'],[s.km.toFixed(1)+' km','DISTANCE'],[s.maxKmh+' km/h','TOP SPEED'],[`${s.done}/${s.total}`,'CHECKPOINTS'],[FEEL[s.feel]||'—','FELT']];
+  const bw=(W-2*P-4*12)/5;st.forEach(([v,k],i)=>{const x=P+i*(bw+12);c.fillStyle=RC.panel;rrect(c,x,y,bw,104,12);c.fill();c.strokeStyle=RC.line;c.lineWidth=2;c.stroke();
+    c.fillStyle=RC.ink;c.font=fnt(700,30,'m');c.fillText(v,x+16,y+52);c.fillStyle=RC.muted;c.font=fnt(800,14,'d');c.fillText(k,x+16,y+84)});
+  y+=136;
+  // map
+  const mx=P,my=y,mw=W-2*P,mh=640;
+  c.save();rrect(c,mx,my,mw,mh,16);c.clip();c.fillStyle='#E9EEEA';c.fillRect(mx,my,mw,mh);
+  const pts=[...(s.track||[]),...cps.map(p=>p.ll),...flags.map(f=>f.ll)].filter(Boolean);
+  if(pts.length){
+    let la0=Math.min(...pts.map(p=>p[0])),la1=Math.max(...pts.map(p=>p[0])),lo0=Math.min(...pts.map(p=>p[1])),lo1=Math.max(...pts.map(p=>p[1]));
+    let z=17;for(;z>3;z--){const a=wpx([la1,lo0],z),b=wpx([la0,lo1],z);if(b[0]-a[0]<=mw-120&&b[1]-a[1]<=mh-120)break}
+    const a=wpx([la1,lo0],z),b=wpx([la0,lo1],z),cx=(a[0]+b[0])/2,cy=(a[1]+b[1])/2,ox=cx-mw/2,oy=cy-mh/2;
+    const toC=ll=>{const p=wpx(ll,z);return[mx+p[0]-ox,my+p[1]-oy]};
+    if(tilesOn){const jobs=[];
+      for(let tx=Math.floor(ox/256);tx<=Math.floor((ox+mw)/256);tx++)for(let ty=Math.floor(oy/256);ty<=Math.floor((oy+mh)/256);ty++){
+        jobs.push(loadImg(`https://a.basemaps.cartocdn.com/rastertiles/voyager/${z}/${tx}/${ty}@2x.png`).then(im=>c.drawImage(im,mx+tx*256-ox,my+ty*256-oy,256,256)).catch(()=>{}))}
+      await Promise.all(jobs)}
+    else{c.strokeStyle='#D9E1DB';c.lineWidth=1;for(let gx=mx;gx<mx+mw;gx+=60){c.beginPath();c.moveTo(gx,my);c.lineTo(gx,my+mh);c.stroke()}for(let gy=my;gy<my+mh;gy+=60){c.beginPath();c.moveTo(mx,gy);c.lineTo(mx+mw,gy);c.stroke()}}
+    if(cps.length>1){c.setLineDash([10,10]);c.strokeStyle=RC.caution;c.lineWidth=4;c.beginPath();cps.forEach((p,i)=>{const q=toC(p.ll);i?c.lineTo(...q):c.moveTo(...q)});c.stroke();c.setLineDash([])}
+    if(s.track?.length>1){c.lineJoin=c.lineCap='round';c.strokeStyle='#fff';c.lineWidth=11;c.beginPath();s.track.forEach((p,i)=>{const q=toC(p);i?c.lineTo(...q):c.moveTo(...q)});c.stroke();
+      c.strokeStyle=RC.track;c.lineWidth=6;c.stroke();const st0=toC(s.track[0]),en=toC(s.track[s.track.length-1]);
+      pinDot(c,...st0,'S',RC.ink,'#fff',13);pinDot(c,...en,'F',RC.ink,'#fff',13)}
+    cps.forEach(p=>pinDot(c,...toC(p.ll),p.n,p.done?RC.ok:RC.caution,p.done?'#fff':'#1D1600'));
+    flags.forEach(f=>{const [x,y2]=toC(f.ll),g=FLAGS[f.label]?.good;c.fillStyle=g?RC.ok:RC.stop;rrect(c,x-15,y2-15,30,30,6);c.fill();c.lineWidth=3;c.strokeStyle='#fff';c.stroke();
+      c.fillStyle='#fff';c.font=fnt(800,15,'m');c.textAlign='center';c.textBaseline='middle';c.fillText(g?'★':f.i,x,y2+1);c.textAlign='left';c.textBaseline='alphabetic'});
+    if(tilesOn){c.fillStyle='rgba(255,255,255,.8)';c.fillRect(mx+mw-250,my+mh-26,250,26);c.fillStyle=RC.muted;c.font=fnt(400,13,'b');c.fillText('© OpenStreetMap contributors © CARTO',mx+mw-240,my+mh-9)}
+  }else{c.fillStyle=RC.muted;c.font=fnt(400,24,'b');c.textAlign='center';c.fillText('No GPS track was recorded for this lesson',W/2,my+mh/2);c.textAlign='left'}
+  c.restore();c.strokeStyle=RC.line;c.lineWidth=2;rrect(c,mx,my,mw,mh,16);c.stroke();
+  y=my+mh+30;
+  // legend
+  c.font=fnt(400,18,'b');let lx=P;
+  [[RC.track,'Route driven'],[RC.ok,'Checkpoint reached'],[RC.caution,'Checkpoint missed'],[RC.stop,'Mistake mark']].forEach(([col,t])=>{c.fillStyle=col;rrect(c,lx,y-14,18,18,4);c.fill();c.fillStyle=RC.muted;c.fillText(t,lx+26,y);lx+=c.measureText(t).width+60});
+  y+=50;
+  const H=t=>{c.fillStyle=RC.sign;c.font=fnt(900,30,'d');c.fillText(t,P,y);y+=14;c.fillStyle=RC.line;c.fillRect(P,y,W-2*P,3);y+=36};
+  // mistakes
+  H('Mistakes marked');
+  const groups={};bad.forEach(f=>(groups[f.label]=groups[f.label]||[]).push(f));const gl=Object.entries(groups).sort((a,b)=>b[1].length-a[1].length);
+  if(!gl.length){c.fillStyle=RC.ink;c.font=fnt(400,24,'b');c.fillText('No mistakes marked. Clean drive.',P,y);y+=40}
+  const maxN=Math.max(1,...gl.map(g=>g[1].length));
+  gl.forEach(([lab,arr])=>{c.fillStyle=RC.ink;c.font=fnt(700,24,'b');c.fillText(lab,P,y);c.font=fnt(700,24,'m');c.textAlign='right';c.fillText('×'+arr.length,W-P,y);c.textAlign='left';
+    y+=14;c.fillStyle='#E3EAE4';rrect(c,P,y,W-2*P,12,6);c.fill();c.fillStyle=RC.stop;rrect(c,P,y,(W-2*P)*arr.length/maxN,12,6);c.fill();y+=34;
+    c.fillStyle=RC.muted;c.font=fnt(400,18,'m');y=wrap(c,'Marks '+arr.map(f=>`#${f.i} at ${fmtDur((f.t||s.start)-s.start)}`).join(', '),P,y,W-2*P,26)+14});
+  if(good.length){c.fillStyle=RC.ok;c.font=fnt(700,24,'b');c.fillText(`★ Nice job marked ${good.length}×`,P,y);y+=44}
+  y+=10;
+  // checkpoints
+  if(cps.length){H('Checkpoints');cps.forEach(p=>{pinDot(c,P+17,y-8,p.n,p.done?RC.ok:RC.caution,p.done?'#fff':'#1D1600',16);
+    c.fillStyle=RC.ink;c.font=fnt(700,24,'b');c.fillText(p.name+(p.done?'':'  (missed)'),P+48,y);y+=30;
+    if(p.task){c.fillStyle=RC.muted;c.font=fnt(400,20,'b');y=wrap(c,p.task,P+48,y,W-2*P-48,28)}y+=14});y+=10}
+  // reminders
+  H('Reminders for next time');const rem=[];
+  gl.slice(0,3).forEach(([lab])=>FLAGS[lab]?.tip&&rem.push([lab,FLAGS[lab].tip]));
+  const missed=cps.filter(p=>!p.done);if(missed.length)rem.push(['Retry',`Go back to ${missed.map(p=>p.name).join(', ')} next lesson.`]);
+  if(!gl.length&&!missed.length&&s.feel>=4)rem.push(['Level up','Everything went well. Try the next stage next time.']);
+  if(!rem.length)rem.push(['Keep going','Repeat this route once more to build confidence before moving on.']);
+  rem.forEach(([k,t],i)=>{c.fillStyle=RC.caution;rrect(c,P,y-26,36,36,8);c.fill();c.fillStyle='#1D1600';c.font=fnt(800,20,'m');c.textAlign='center';c.fillText(i+1,P+18,y-1);c.textAlign='left';
+    c.fillStyle=RC.ink;c.font=fnt(700,24,'b');c.fillText(k,P+52,y);y+=32;c.font=fnt(400,22,'b');y=wrap(c,t,P+52,y,W-2*P-52,30)+16});
+  // notes
+  if(s.notes){y+=6;H('Notes');c.fillStyle=RC.ink;c.font=fnt(400,22,'b');y=wrap(c,s.notes,P,y,W-2*P,32)+10}
+  // footer
+  const all=SKILLS.flatMap(g=>g[1]),pct=Math.round(all.reduce((a,[k])=>a+(S.skills[k]||0),0)/(all.length*3)*100);
+  y+=20;c.fillStyle=RC.line;c.fillRect(P,y,W-2*P,2);y+=36;c.fillStyle=RC.muted;c.font=fnt(400,20,'b');
+  c.fillText(`Skill board: ${pct}% road-test ready · Lesson ${S.sessions.length-S.sessions.findIndex(x=>x.id===s.id)} of ${S.sessions.length}`,P,y);y+=P;
+  const out=document.createElement('canvas');out.width=W;out.height=y;const o=out.getContext('2d');o.drawImage(cv,0,0);
+  return out}
+
+function canvasBlob(cv,type='image/png',q){return new Promise((res,rej)=>{try{cv.toBlob(b=>b?res(b):rej(new Error('blob')),type,q)}catch(e){rej(e)}})}
+async function reportCanvas(s){if(reportCache[s.id])return reportCache[s.id];let cv=await buildReport(s,true);
+  try{await canvasBlob(cv)}catch(e){cv=await buildReport(s,false)}return reportCache[s.id]=cv}
+async function deliver(blob,name){const file=new File([blob],name,{type:blob.type});
+  if(navigator.canShare&&navigator.canShare({files:[file]})){try{await navigator.share({files:[file],title:'Lesson report'});return}catch(e){if(e.name==='AbortError')return}}
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000)}
+let jspdfP=null;function loadJsPDF(){return jspdfP=jspdfP||new Promise((res,rej)=>{if(window.jspdf)return res(window.jspdf);const sc=document.createElement('script');
+  sc.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';sc.onload=()=>res(window.jspdf);sc.onerror=()=>{jspdfP=null;rej()};document.head.appendChild(sc)})}
+const repName=(s,ext)=>`lesson-${new Date(s.start).toISOString().slice(0,10)}-${(s.routeName||'drive').toLowerCase().replace(/[^a-z0-9]+/g,'-')}.${ext}`;
+function renderReport(){const s=S.sessions.find(x=>x.id===reportView);if(!s){reportView=null;return render()}
+  pane.innerHTML=`<div class="row" style="justify-content:space-between"><h2>Lesson report</h2><button class="btn" id="repClose">Close</button></div>
+   <div class="row"><button class="btn primary" id="repPng">Share PNG</button><button class="btn primary" id="repPdf">Share PDF</button></div>
+   <div id="repBox" class="empty">Drawing the report…</div>`;
+  reportCanvas(s).then(cv=>{const box=document.getElementById('repBox');if(!box||reportView!==s.id)return;
+    box.className='';box.innerHTML='';const img=new Image();img.alt='Lesson report';img.style.cssText='width:100%;border-radius:10px;border:1px solid var(--line)';
+    try{img.src=cv.toDataURL('image/png')}catch(e){}box.appendChild(img)})}
+async function sharePng(){const s=S.sessions.find(x=>x.id===reportView);const cv=await reportCanvas(s);deliver(await canvasBlob(cv),repName(s,'png'))}
+async function sharePdf(){const s=S.sessions.find(x=>x.id===reportView);const cv=await reportCanvas(s);
+  try{const {jsPDF}=await loadJsPDF();const w=cv.width*.5,h=cv.height*.5;const pdf=new jsPDF({orientation:'p',unit:'pt',format:[w,h]});
+    pdf.addImage(cv.toDataURL('image/jpeg',.9),'JPEG',0,0,w,h);deliver(pdf.output('blob'),repName(s,'pdf'))}catch(e){toast('PDF needs an internet connection. Try PNG.')}}
+
+/* ---------- UI ---------- */
+let tab='drive';
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;reportView=null;
+  document.querySelectorAll('.tabs button').forEach(x=>x.setAttribute('aria-selected',x===b));if(tab!=='routes')setPlacing(false);render()});
+const pane=document.getElementById('pane');
+document.getElementById('locBtn').onclick=e=>{if(!ensureWatch())return;follow=!follow;e.currentTarget.setAttribute('aria-pressed',follow);if(follow&&lastFix)map.setView(lastFix.ll,17)};
+map.on('dragstart',()=>{if(follow){follow=false;document.getElementById('locBtn').setAttribute('aria-pressed','false')}});
+document.getElementById('fitBtn').onclick=fitRoute;
+
+function mapsLink(r){const p=r.cps.filter(c=>c.lat!=null).map(c=>`${c.lat.toFixed(6)},${c.lng.toFixed(6)}`);if(!p.length)return null;
+  const dest=p[p.length-1],way=p.slice(0,-1).slice(0,9);
+  return `https://www.google.com/maps/dir/?api=1&destination=${dest}${way.length?'&waypoints='+encodeURIComponent(way.join('|')):''}&travelmode=driving`}
+
+function routeSelect(){return `<select id="routeSel" aria-label="Lesson route">${S.routes.map(r=>`<option value="${r.id}" ${r.id===route().id?'selected':''}>${esc(r.stage)} · ${esc(r.name)}</option>`).join('')}</select>`}
+function cpList(r,editable){return `<ul class="cps">${r.cps.map((c,i)=>{const done=sess&&sess.done.includes(c.id);
+  const cls=done?'done':c.lat!=null?'placed':'';
+  if(editable)return `<li><span class="num ${cls}">${i+1}</span><div class="cp-edit"><input type="text" id="n_${c.id}" data-cp="${c.id}" data-f="name" value="${esc(c.name)}" aria-label="Checkpoint name"><input type="text" id="t_${c.id}" data-cp="${c.id}" data-f="task" value="${esc(c.task)}" placeholder="What to practise here" aria-label="Task"><span class="small muted">${c.lat!=null?'Pinned · drag the pin to move it':'Not on the map yet'}</span></div><div class="stack"><button class="iconbtn" data-up="${c.id}" aria-label="Move up">↑</button><button class="iconbtn" data-unpin="${c.id}" aria-label="Remove pin">⌫</button><button class="iconbtn" data-del="${c.id}" aria-label="Delete checkpoint">✕</button></div></li>`;
+  return `<li><span class="num ${cls}">${i+1}</span><div><div class="cp-name">${esc(c.name)}</div><div class="cp-task">${esc(c.task)}</div></div>${sess&&c.lat!=null&&!done?`<button class="btn small" data-done="${c.id}">Done</button>`:'<span></span>'}</li>`}).join('')}</ul>`}
+
+function renderDrive(){const r=route();const placed=r.cps.filter(c=>c.lat!=null).length;
+  if(ending){const el=Date.now()-sess.start;
+    pane.innerHTML=`<h2>How did it go?</h2>
+     <div class="sum">${gauge(fmtDur(el),'Time')}${gauge(sess.km.toFixed(1),'Km')}${gauge(sess.done.length+'/'+placed,'Checkpoints')}</div>
+     <h3>How did it feel for her?</h3>
+     <div class="chips">${['Rough','Nervous','Okay','Good','Great'].map((t,i)=>`<button class="chip" data-feel="${i+1}" aria-pressed="${endForm.feel===i+1}">${t}</button>`).join('')}</div>
+     <h3>Notes for next time</h3>
+     <textarea id="endNotes" placeholder="e.g. Brakes late before stop signs. Lane changes much better.">${esc(endForm.notes)}</textarea>
+     <div class="small muted">Tip: open Skills and update anything that moved today.</div>
+     <div class="row"><button class="btn primary big" id="saveSess">Save lesson</button></div>
+     <button class="btn danger" id="discardSess">Discard this lesson</button>`;return}
+  if(!sess){pane.innerHTML=`${routeSelect()}
+     <div class="plate"><div class="k">${esc(r.stage)}</div><div class="n">${esc(r.name)}</div><div class="g">${esc(r.goal)}</div></div>
+     ${placed?'':`<div class="empty">This route has no pins yet.<br><button class="btn primary" id="goPlace" style="margin-top:10px">Place checkpoints on the map</button></div>`}
+     <button class="btn primary big" id="startBtn">Start lesson</button>
+     <div class="row">${mapsLink(r)?`<a class="btn" href="${mapsLink(r)}" target="_blank" rel="noopener">Open route in Google Maps</a>`:''}</div>
+     <h3>Checkpoints</h3>${cpList(r,false)}
+     <div class="small muted">Pins tick off by themselves when you drive within ${ARRIVE_M} m. Supervisor rule of thumb: you navigate, she only drives.</div>`;return}
+  const nx=nextCp();const pct=placed?Math.round(sess.done.length/placed*100):0;
+  pane.innerHTML=`<div class="hud"><div class="gauge speed"><div class="v" id="hSpeed">0</div><div class="u">km/h</div></div>
+     <div class="gauge"><div class="v" id="hTime">0:00</div><div class="u">Time</div></div>
+     <div class="gauge"><div class="v" id="hKm">0.0</div><div class="u">Km</div></div></div>
+     ${nx?`<div class="next"><div><h3>Next · ${r.cps.indexOf(nx)+1}</h3><div class="cp-name">${esc(nx.name)}</div></div><div class="d" id="hNext">—</div><div class="t">${esc(nx.task)}</div>
+       <button class="btn" data-done="${nx.id}" style="grid-column:1/-1">Mark done</button></div>`
+      :placed?`<div class="next"><div class="cp-name">All checkpoints done. Head back and end the lesson.</div></div>`:`<div class="empty">Free drive. No pins on this route.</div>`}
+     <div class="progressbar" aria-label="Route progress"><i style="width:${pct}%"></i></div>
+     <h3>Mark a moment</h3>
+     <div class="chips">${Object.keys(FLAGS).map(t=>`<button class="chip" data-flag="${esc(t)}">${t}</button>`).join('')}</div>
+     ${cpList(r,false)}
+     <button class="btn stopbtn big" id="endBtn">End lesson</button>`;
+  updateHud()}
+const gauge=(v,u)=>`<div class="gauge"><div class="v" style="font-size:24px">${v}</div><div class="u">${u}</div></div>`;
+function updateHud(){if(!sess||ending)return;const q=id=>document.getElementById(id);
+  q('hSpeed')&&(q('hSpeed').textContent=Math.round(sess.kmh||0));q('hTime')&&(q('hTime').textContent=fmtDur(Date.now()-sess.start));
+  q('hKm')&&(q('hKm').textContent=sess.km.toFixed(1));q('hNext')&&(q('hNext').textContent=sess.nextDist!=null?fmtDist(sess.nextDist):'—')}
+
+function renderRoutes(){const r=route();
+  pane.innerHTML=`${routeSelect()}
+   <div class="stack"><input type="text" id="rName" value="${esc(r.name)}" aria-label="Route name">
+   <div class="row" style="flex-wrap:nowrap"><input type="text" id="rStage" value="${esc(r.stage)}" aria-label="Stage" style="max-width:110px"><input type="text" id="rGoal" value="${esc(r.goal)}" aria-label="Goal" placeholder="Goal for this route"></div></div>
+   <button class="btn ${placing?'primary':''} big" id="placeBtn">${placing?'Done placing pins':'Tap map to place pins'}</button>
+   <div class="small muted">Pins go in order. Unpinned checkpoints get filled first, then each tap adds a new one. Drag a pin to fine-tune it.</div>
+   ${cpList(r,true)}
+   <div class="row"><button class="btn" id="addCp">Add checkpoint</button><button class="btn" id="newRoute">New route</button><button class="btn danger" id="delRoute">Delete route</button></div>
+   <h3>Backup</h3><div class="row"><button class="btn" id="exportBtn">Export data</button><button class="btn" id="importBtn">Import data</button></div>`}
+
+function renderSkills(){const all=SKILLS.flatMap(g=>g[1]);const tot=all.reduce((a,[k])=>a+(S.skills[k]||0),0),max=all.length*3;
+  pane.innerHTML=`<div class="stack"><div class="row" style="justify-content:space-between"><h2>Skill board</h2><span class="muted small">${Math.round(tot/max*100)}% to road-test ready</span></div>
+   <div class="progressbar"><i style="width:${tot/max*100}%"></i></div></div>
+   ${SKILLS.map(([g,items])=>`<div class="skillgroup"><h3>${g}</h3>${items.map(([k,n])=>{const v=S.skills[k]||0;
+     return `<div class="skill"><div>${n}</div><div><div class="lvl" role="group" aria-label="${esc(n)}">${[1,2,3].map(l=>`<button data-sk="${k}" data-l="${l}" class="${v>=l?'on':''}" aria-label="${LEVELS[l]}"></button>`).join('')}</div><div class="lvlname">${LEVELS[v]}</div></div></div>`}).join('')}</div>`).join('')}`}
+
+function renderLog(){const ss=S.sessions;const mins=ss.reduce((a,s)=>a+(s.end-s.start)/60000,0),km=ss.reduce((a,s)=>a+s.km,0);
+  const feel=['','Rough','Nervous','Okay','Good','Great'];
+  pane.innerHTML=`<div class="sum">${gauge(ss.length,'Lessons')}${gauge((mins/60).toFixed(1),'Hours')}${gauge(km.toFixed(0),'Km')}</div>
+   ${ss.length?ss.map(s=>`<div class="entry"><div class="top"><span>${esc(s.routeName)}</span><span>${feel[s.feel]||''}</span></div>
+     <div class="meta">${new Date(s.start).toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'})} · ${fmtDur(s.end-s.start)} · ${s.km} km · top ${s.maxKmh} km/h · ${s.done}/${s.total} pins${s.flags?.length?` · ${s.flags.length} marks`:''}</div>
+     ${s.notes?`<div class="note">${esc(s.notes)}</div>`:''}<div class="row" style="margin-top:10px"><button class="btn small" data-sess="${s.id}">Show on map</button><button class="btn small primary" data-rep="${s.id}">Report</button></div></div>`).join('')
+    :`<div class="empty">No lessons yet. Finished lessons land here with time, distance, the track you drove and your notes. Tap one to see its track on the map.</div>`}
+`}
+
+function render(){if(reportView)return renderReport();({drive:renderDrive,routes:renderRoutes,skills:renderSkills,log:renderLog})[tab]()}
+
+pane.addEventListener('click',e=>{const t=e.target.closest('button');if(!t)return;const r=route();const d=t.dataset;
+  if(t.id==='startBtn')return startSession();
+  if(t.id==='goPlace'){tab='routes';document.querySelectorAll('.tabs button').forEach(x=>x.setAttribute('aria-selected',x.dataset.tab==='routes'));setPlacing(true);return render()}
+  if(t.id==='endBtn'){ending=true;return render()}
+  if(t.id==='saveSess')return finishSession(true);
+  if(t.id==='repClose'){reportView=null;return render()}
+  if(t.id==='repPng')return sharePng();
+  if(t.id==='repPdf')return sharePdf();
+  if(d.rep){reportView=d.rep;return render()}
+  if(t.id==='discardSess'){if(t.dataset.sure)return finishSession(false);t.dataset.sure=1;t.textContent='Tap again to discard';return}
+  if(d.feel){endForm.feel=+d.feel;return render()}
+  if(d.done){const c=r.cps.find(c=>c.id===d.done);return markDone(c,false)}
+  if(d.flag)return flagMoment(d.flag);
+  if(t.id==='placeBtn'){setPlacing(!placing);if(placing)toast('Tap the map where each checkpoint is');return render()}
+  if(t.id==='addCp'){r.cps.push({id:uid(),name:'Checkpoint '+(r.cps.length+1),task:'',lat:null,lng:null});save();return render()}
+  if(d.up){const i=r.cps.findIndex(c=>c.id===d.up);if(i>0){[r.cps[i-1],r.cps[i]]=[r.cps[i],r.cps[i-1]];save();drawRoute();render()}return}
+  if(d.unpin){const c=r.cps.find(c=>c.id===d.unpin);c.lat=c.lng=null;save();drawRoute();return render()}
+  if(d.del){r.cps=r.cps.filter(c=>c.id!==d.del);save();drawRoute();return render()}
+  if(t.id==='newRoute'){const n={id:uid(),name:'My route',stage:'Custom',goal:'',cps:[]};S.routes.push(n);S.activeRouteId=n.id;save();setPlacing(true);drawRoute();return render()}
+  if(t.id==='delRoute'){if(S.routes.length<2)return toast('Keep at least one route');if(!t.dataset.sure){t.dataset.sure=1;t.textContent='Tap again to delete';return}
+    S.routes=S.routes.filter(x=>x.id!==r.id);S.activeRouteId=S.routes[0].id;save();drawRoute();return render()}
+  if(d.sk){const l=+d.l;S.skills[d.sk]=S.skills[d.sk]===l?l-1:l;save();return render()}
+  if(d.sess){const s=S.sessions.find(s=>s.id===d.sess);histLayer.clearLayers();if(s.track?.length){const pl=L.polyline(s.track,{color:'#7A4FD6',weight:5,opacity:.85}).addTo(histLayer);
+    (s.flags||[]).forEach(f=>L.marker(f.ll,{icon:L.divIcon({className:'',iconSize:[22,22],iconAnchor:[11,11],html:'<div class="flag">!</div>'})}).bindTooltip(esc(f.label)).addTo(histLayer));
+    map.fitBounds(pl.getBounds(),{padding:[30,30]})}else toast('No GPS track saved for this lesson');return}
+  if(t.id==='exportBtn'){const b=new Blob([JSON.stringify(S,null,1)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='drive-coach-backup.json';a.click();return}
+  if(t.id==='importBtn')return document.getElementById('importFile').click();
+});
+pane.addEventListener('change',e=>{const t=e.target;const r=route();
+  if(t.id==='routeSel'){if(sess)return toast('End the lesson before switching routes'),render();S.activeRouteId=t.value;save();histLayer.clearLayers();drawRoute();fitRoute();return render()}
+});
+pane.addEventListener('input',e=>{const t=e.target;const r=route();
+  if(t.id==='endNotes'){endForm.notes=t.value;return}
+  if(t.id==='rName'){r.name=t.value;save();return}
+  if(t.id==='rStage'){r.stage=t.value;save();return}
+  if(t.id==='rGoal'){r.goal=t.value;save();return}
+  if(t.dataset.cp){const c=r.cps.find(c=>c.id===t.dataset.cp);c[t.dataset.f]=t.value;save();drawRoute()}
+});
+document.getElementById('importFile').onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
+  rd.onload=()=>{try{const j=JSON.parse(rd.result);if(!Array.isArray(j.routes))throw 0;S=j;save();drawRoute();render();toast('Data imported')}catch(err){toast('That file is not a Drive Coach backup')}};rd.readAsText(f)};
+document.addEventListener('visibilitychange',async()=>{if(sess&&document.visibilityState==='visible'&&!wake){try{wake=await navigator.wakeLock?.request('screen')}catch(e){}}});
+window.addEventListener('beforeunload',e=>{if(sess){e.preventDefault();e.returnValue=''}});
+
+drawRoute();render();
+</script>
+</body>
+</html>
