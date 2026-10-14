@@ -444,6 +444,104 @@ async function sharePdf(){const s=S.sessions.find(x=>x.id===reportView);const cv
   try{const {jsPDF}=await loadJsPDF();const w=cv.width*.5,h=cv.height*.5;const pdf=new jsPDF({orientation:'p',unit:'pt',format:[w,h]});
     pdf.addImage(cv.toDataURL('image/jpeg',.9),'JPEG',0,0,w,h);deliver(pdf.output('blob'),repName(s,'pdf'))}catch(e){toast('PDF needs an internet connection. Try PNG.')}}
 
+/* ---------- auto-build & place search (OpenStreetMap) ---------- */
+let busy=false, placeResults=[];
+const stageNum=r=>+((/Stage\s*(\d)/i.exec(r.stage||'')||[])[1]||0);
+const tplFor=n=>TEMPLATES[n-1];
+const ck=p=>p[0].toFixed(7)+','+p[1].toFixed(7);
+function bearing(a,b){const t=Math.PI/180,y=Math.sin((b[1]-a[1])*t)*Math.cos(b[0]*t),x=Math.cos(a[0]*t)*Math.sin(b[0]*t)-Math.sin(a[0]*t)*Math.cos(b[0]*t)*Math.cos((b[1]-a[1])*t);return(Math.atan2(y,x)/t+360)%360}
+function polyArea(g){if(g.length<3)return 0;const la=g[0][0],k=Math.cos(la*Math.PI/180);let a=0;
+  for(let i=0;i<g.length;i++){const p=g[i],q=g[(i+1)%g.length];a+=((p[1]-g[0][1])*111320*k)*((q[0]-la)*110540)-((q[1]-g[0][1])*111320*k)*((p[0]-la)*110540)}return Math.abs(a/2)}
+function cluster(list,m){const out=[];list.forEach(f=>{if(!out.some(o=>hav(o.ll,f.ll)<m))out.push(f)});return out}
+async function overpass(q){const ctl=new AbortController();const tm=setTimeout(()=>ctl.abort(),30000);
+  try{const res=await fetch('https://overpass-api.de/api/interpreter',{method:'POST',body:'data='+encodeURIComponent(q),headers:{'Content-Type':'application/x-www-form-urlencoded'},signal:ctl.signal});
+    if(!res.ok)throw new Error('http '+res.status);return (await res.json()).elements||[]}finally{clearTimeout(tm)}}
+
+async function fetchFeatures(kinds,s){
+  const A=(r)=>`(around:${r},${s[0].toFixed(5)},${s[1].toFixed(5)})`,parts=[];
+  if(kinds.includes('lot'))parts.push(`way["amenity"="parking"]["parking"!~"underground|multi-storey|rooftop"]["access"!~"private|no"]${A(4000)};`);
+  if(kinds.includes('stop'))parts.push(`node["highway"="stop"]${A(2500)};`);
+  if(kinds.includes('signals'))parts.push(`node["highway"="traffic_signals"]${A(3500)};`);
+  if(kinds.includes('round'))parts.push(`way["junction"~"^(roundabout|circular)$"]${A(5000)};`);
+  if(kinds.includes('play'))parts.push(`node["leisure"="playground"]${A(2500)};way["leisure"="playground"]${A(2500)};`);
+  if(kinds.includes('ramp'))parts.push(`way["highway"~"^(motorway|trunk|motorway_link|trunk_link)$"]${A(7000)};`);
+  const els=await overpass(`[out:json][timeout:25];(${parts.join('')});out geom;`);
+  const F={lot:[],stop:[],allway:[],signals:[],round:[],play:[],main:[],link:[]};
+  for(const e of els){const t=e.tags||{};const g=e.type==='node'?[[e.lat,e.lon]]:(e.geometry||[]).map(p=>[p.lat,p.lon]);if(!g.length)continue;
+    const ll=[g.reduce((a,p)=>a+p[0],0)/g.length,g.reduce((a,p)=>a+p[1],0)/g.length];const f={ll,g,name:t.name};
+    if(t.highway==='stop')(t.stop==='all'?F.allway:F.stop).push(f);
+    else if(t.highway==='traffic_signals')F.signals.push(f);
+    else if(t.junction)F.round.push(f);
+    else if(t.amenity==='parking'){f.area=polyArea(g);if(f.area>=6000)F.lot.push(f)}
+    else if(t.leisure==='playground')F.play.push(f);
+    else if(/_link$/.test(t.highway||''))F.link.push(f);
+    else if(/^(motorway|trunk)$/.test(t.highway||''))F.main.push(f)}
+  F.signals=cluster(F.signals,45);F.round=cluster(F.round,90);F.stop=cluster(F.stop,25);F.allway=cluster(F.allway,40);
+  F.stop=F.stop.concat(F.allway);
+  return F}
+
+function lotPins(lot,start){const la=lot.g.map(p=>p[0]),lo=lot.g.map(p=>p[1]);const b=[Math.min(...la),Math.max(...la),Math.min(...lo),Math.max(...lo)];
+  const c=lot.ll,ins=p=>[c[0]+(p[0]-c[0])*.55,c[1]+(p[1]-c[1])*.55];
+  const corners=[[b[1],b[2]],[b[1],b[3]],[b[0],b[3]],[b[0],b[2]]].map(ins).sort((p,q)=>hav(start,p)-hav(start,q));
+  return [corners[0],c,corners[1],corners[2],corners[3]]}
+function bestLot(F,s){return F.lot.map(l=>({l,sc:l.area*Math.exp(-hav(s,l.ll)/2000)})).sort((a,b)=>b.sc-a.sc)[0]?.l}
+function walkRamp(F,s){
+  const mainSet=new Set();F.main.forEach(w=>w.g.forEach(p=>mainSet.add(ck(p))));
+  const on=F.link.filter(l=>mainSet.has(ck(l.g[l.g.length-1]))&&!mainSet.has(ck(l.g[0])));
+  const offStart=new Map();F.link.forEach(l=>{if(mainSet.has(ck(l.g[0]))&&!mainSet.has(ck(l.g[l.g.length-1])))offStart.set(ck(l.g[0]),l)});
+  const startIdx=new Map();F.main.forEach(w=>{const k=ck(w.g[0]);(startIdx.get(k)||startIdx.set(k,[]).get(k)).push(w)});
+  const onSorted=on.sort((a,b)=>hav(s,a.g[0])-hav(s,b.g[0]));
+  for(const ramp of onSorted.slice(0,4)){const merge=ramp.g[ramp.g.length-1],mk=ck(merge);
+    let way=null,i=0;for(const w of F.main){const j=w.g.findIndex(p=>ck(p)===mk);if(j>=0&&j<w.g.length-1){way=w;i=j;break}}
+    if(!way)continue;let dist=0,prev=merge,steps=0,path=[merge];const seen=new Set([way]);
+    while(steps++<6000){i++;if(i>=way.g.length){const nx=(startIdx.get(ck(way.g[way.g.length-1]))||[]).filter(w=>!seen.has(w)).sort((a,b)=>Math.abs(((bearing(a.g[0],a.g[1])-bearing(prev,a.g[0])+540)%360)-180)-Math.abs(((bearing(b.g[0],b.g[1])-bearing(prev,b.g[0])+540)%360)-180))[0];
+        if(!nx)break;way=nx;seen.add(nx);i=0;continue}
+      const p=way.g[i];dist+=hav(prev,p);prev=p;path.push(p);
+      const off=offStart.get(ck(p));if(off&&dist>=1200){const mid=path[Math.floor(path.length/2)];return{onRamp:ramp.g[0],merge,cruise:mid,exit:off.g[Math.min(off.g.length-1,Math.floor(off.g.length/2))]}}
+      if(dist>9000)break}}
+  return null}
+
+async function autoBuild(){const r=route(),n=stageNum(r);
+  if(!n||n>6)return toast('Auto-build works on the 6 stage routes. Use search or tap the map for custom routes.');
+  if(busy)return;const c=map.getCenter(),s=[c.lat,c.lng];busy=true;render();toast('Searching OpenStreetMap near the map centre…');
+  const need={1:['lot'],2:['stop','play'],3:['signals'],4:['round'],5:['ramp'],6:['lot','stop','signals','round']}[n];
+  try{const F=await fetchFeatures(need,s);const tpl=tplFor(n);let cps=[];
+    const used=[];const take=(list,from,min=150)=>{const f=list.filter(x=>!used.includes(x)&&used.every(u=>hav(u.ll,x.ll)>=min)&&hav(s,x.ll)>=80).sort((a,b)=>hav(from,a.ll)-hav(from,b.ll))[0];if(f)used.push(f);return f};
+    const mk=(name,task,ll,place)=>({id:uid(),name,task:place?`${task} (${place})`:task,lat:ll?+ll[0].toFixed(6):null,lng:ll?+ll[1].toFixed(6):null});
+    if(n===1){const lot=bestLot(F,s);const pins=lot?lotPins(lot,s):[];cps=tpl.cps.map(([nm,tk],i)=>mk(nm,tk,pins[i],i===0&&lot?.name))}
+    else if(n===2){let cur=s;const slots=['stop','stop','stop','play','allway','start'];
+      cps=tpl.cps.map(([nm,tk],i)=>{const k=slots[i];let f=null;
+        if(k==='start')return mk(nm,tk,s);
+        if(k==='allway')f=take(F.allway.length?F.allway:F.stop,cur);else if(k==='play')f=take(F.play,cur,100);else f=take(F.stop,cur);
+        if(f)cur=f.ll;return mk(nm,tk,f?.ll,f?.name)})}
+    else if(n===3){let cur=s;cps=tpl.cps.map(([nm,tk])=>{const f=take(F.signals,cur,300);if(f)cur=f.ll;return mk(nm,tk,f?.ll)})}
+    else if(n===4){let cur=s;cps=[1,2,3].map(i=>{const f=take(F.round,cur,250);if(f)cur=f.ll;
+      return mk('Roundabout '+i,'Slow early and pick your lane, yield to traffic already inside, signal right before your exit.',f?.ll,f?.name)})}
+    else if(n===5){const w=walkRamp(F,s);const pts=w?[w.onRamp,w.merge,w.cruise,w.exit]:[];cps=tpl.cps.map(([nm,tk],i)=>mk(nm,tk,pts[i]))}
+    else if(n===6){let cur=s;const lot=take(F.lot.sort((a,b)=>b.area-a.area).slice(0,8),s,0);if(lot)cur=lot.ll;
+      const st=take(F.stop,cur);if(st)cur=st.ll;const sg=take(F.signals,cur,300);if(sg)cur=sg.ll;const rd=take(F.round,cur,250);
+      cps=[mk('Pre-trip check','Explain the controls out loud before moving.',s),mk('Parking','Stall park forward and reverse, then a three-point turn.',lot?.ll,lot?.name),
+        mk('Stop sign','Full stop behind the line, look left, right, left.',st?.ll),mk('Traffic signals','Approach a stale green ready to stop. Smooth left on green.',sg?.ll),
+        mk('Roundabout','Pick the lane early, yield, signal out.',rd?.ll,rd?.name),mk('Back to start','Park at the curb, wheels within 30 cm.',s)]}
+    const found=cps.filter(c=>c.lat!=null).length;
+    if(!found){toast('Nothing suitable found here. Move the map or tap Near me, then try again.');return}
+    r.cps=cps;r.area=r.area||S.areaId;save();drawRoute();fitRoute();
+    toast(found===cps.length?`Placed ${found} pins. Check them and drag any that look off.`:`Placed ${found} of ${cps.length}. Tap the map or search for the rest.`)}
+  catch(e){toast('Could not reach OpenStreetMap. Check the connection and try again.')}
+  finally{busy=false;render()}}
+
+async function placeSearch(q){q=q.trim();if(!q)return;const b=map.getBounds().pad(1.5);
+  const url=`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&countrycodes=ca&q=${encodeURIComponent(q)}&viewbox=${b.getWest()},${b.getNorth()},${b.getEast()},${b.getSouth()}`;
+  const box=document.getElementById('placeRes');if(box)box.innerHTML='<div class="small muted">Searching…</div>';
+  try{const res=await fetch(url,{headers:{'Accept-Language':'en'}});const j=await res.json();
+    placeResults=j.map(x=>({name:x.name||x.display_name.split(',')[0],addr:x.display_name.split(',').slice(1,3).join(',').trim(),ll:[+x.lat,+x.lon]}));
+    if(document.getElementById('placeRes'))document.getElementById('placeRes').innerHTML=placeResults.length?placeResults.map((p,i)=>`<button class="entry" data-place="${i}"><div class="top"><span>${esc(p.name)}</span></div><div class="meta">${esc(p.addr)}</div></button>`).join(''):'<div class="small muted">No matches. Try a different name or a street address.</div>'}
+  catch(e){if(document.getElementById('placeRes'))document.getElementById('placeRes').innerHTML='<div class="small muted">Search failed. Check the connection.</div>'}}
+function pinPlace(i){const p=placeResults[i],r=route();if(!p)return;let c=r.cps.find(c=>c.lat==null);
+  if(!c){c={id:uid(),name:p.name,task:'',lat:null,lng:null};r.cps.push(c)}
+  c.lat=+p.ll[0].toFixed(6);c.lng=+p.ll[1].toFixed(6);if(!r.area)r.area=S.areaId;save();drawRoute();map.setView(p.ll,16);
+  toast(`Pinned “${c.name}” at ${p.name}`);placeResults=[];render()}
+
 /* ---------- UI ---------- */
 let tab='drive';
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;reportView=null;
@@ -488,7 +586,7 @@ function renderDrive(){const r=route();const placed=r.cps.filter(c=>c.lat!=null)
      <button class="btn danger" id="discardSess">Discard this lesson</button>`;return}
   if(!sess){pane.innerHTML=`${areaBar()}${routeSelect()}
      <div class="plate"><div class="k">${esc(r.stage)}</div><div class="n">${esc(r.name)}</div><div class="g">${esc(r.goal)}</div></div>
-     ${placed?'':`<div class="empty">This route has no pins yet.<br><button class="btn primary" id="goPlace" style="margin-top:10px">Place checkpoints on the map</button></div>`}
+     ${placed?'':`<div class="empty">This route has no pins yet.<br><div class="row" style="justify-content:center;margin-top:10px"><button class="btn primary" id="autoBuild" ${busy?'disabled':''}>${busy?'Searching…':'Auto-build pins nearby'}</button><button class="btn" id="goPlace">Place them myself</button></div></div>`}
      <button class="btn primary big" id="startBtn">Start lesson</button>
      <div class="row">${mapsLink(r)?`<a class="btn" href="${mapsLink(r)}" target="_blank" rel="noopener">Open route in Google Maps</a>`:''}</div>
      <h3>Checkpoints</h3>${cpList(r,false)}
@@ -515,7 +613,9 @@ function renderRoutes(){const r=route();
   pane.innerHTML=`${areaBar()}${routeSelect()}
    <div class="stack"><input type="text" id="rName" value="${esc(r.name)}" aria-label="Route name">
    <div class="row" style="flex-wrap:nowrap"><input type="text" id="rStage" value="${esc(r.stage)}" aria-label="Stage" style="max-width:110px"><input type="text" id="rGoal" value="${esc(r.goal)}" aria-label="Goal" placeholder="Goal for this route"></div></div>
-   <button class="btn ${placing?'primary':''} big" id="placeBtn">${placing?'Done placing pins':'Tap map to place pins'}</button>
+   ${stageNum(r)&&stageNum(r)<=6?`<div class="stack"><button class="btn primary big" id="autoBuild" ${busy?'disabled':''}>${busy?'Searching…':'Auto-build pins nearby'}</button><div class="small muted">Finds real ${['','parking lots','stop signs and playgrounds','traffic signals','roundabouts','highway ramps','mixed test spots'][stageNum(r)]} around the centre of the map. Tap Near me first to start from where you are. Replaces this route's pins.</div></div>`:''}
+   <div class="stack"><div class="row" style="flex-wrap:nowrap"><input type="text" id="placeQ" placeholder="Find a place or address" aria-label="Find a place"><button class="btn" id="placeGo">Find</button></div><div id="placeRes" class="stack">${placeResults.map((p,i)=>`<button class="entry" data-place="${i}"><div class="top"><span>${esc(p.name)}</span></div><div class="meta">${esc(p.addr)}</div></button>`).join('')}</div><div class="small muted">Tap a result to pin the next empty checkpoint there.</div></div>
+   <button class="btn ${placing?'primary':''}" id="placeBtn">${placing?'Done placing pins':'Tap map to place pins'}</button>
    <div class="small muted">Pins go in order. Unpinned checkpoints get filled first, then each tap adds a new one. Drag a pin to fine-tune it.</div>
    ${cpList(r,true)}
    <div class="row"><button class="btn" id="addCp">Add checkpoint</button><button class="btn" id="newRoute">New route</button><button class="btn danger" id="delRoute">Delete route</button></div>
@@ -544,6 +644,9 @@ pane.addEventListener('click',e=>{const t=e.target.closest('button');if(!t)retur
   if(t.id==='endBtn'){ending=true;return render()}
   if(t.id==='saveSess')return finishSession(true);
   if(t.id==='nearMe')return nearMe();
+  if(t.id==='autoBuild')return autoBuild();
+  if(t.id==='placeGo')return placeSearch(document.getElementById('placeQ').value);
+  if(d.place!=null)return pinPlace(+d.place);
   if(t.id==='areaAdd'){savingArea=true;render();document.getElementById('areaName')?.focus();return}
   if(t.id==='areaSave'){const n=document.getElementById('areaName').value.trim();if(!n)return toast('Give the area a name');
     const c=map.getCenter();const a={id:'a_'+uid(),name:n,c:[+c.lat.toFixed(5),+c.lng.toFixed(5)],z:map.getZoom()};
@@ -584,6 +687,7 @@ pane.addEventListener('input',e=>{const t=e.target;const r=route();
   if(t.id==='rGoal'){r.goal=t.value;save();return}
   if(t.dataset.cp){const c=r.cps.find(c=>c.id===t.dataset.cp);c[t.dataset.f]=t.value;save();drawRoute()}
 });
+pane.addEventListener('keydown',e=>{if(e.target.id==='placeQ'&&e.key==='Enter'){e.preventDefault();placeSearch(e.target.value)}});
 document.getElementById('importFile').onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
   rd.onload=()=>{try{const j=JSON.parse(rd.result);if(!Array.isArray(j.routes))throw 0;S=j;save();drawRoute();render();toast('Data imported')}catch(err){toast('That file is not a Drive Coach backup')}};rd.readAsText(f)};
 document.addEventListener('visibilitychange',async()=>{if(sess&&document.visibilityState==='visible'&&!wake){try{wake=await navigator.wakeLock?.request('screen')}catch(e){}}});
