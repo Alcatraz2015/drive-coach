@@ -516,15 +516,33 @@ function walkRamp(F,s){
       if(dist>9000)break}}
   return null}
 
-async function autoBuild(){const r=route(),n=stageNum(r);
+
+/* lot picker */
+let lotPick=null;const lotLayer=L.layerGroup().addTo(map);
+function showLotPicker(p){lotPick=p;lotLayer.clearLayers();setPlacing(false);
+  p.lots.forEach((l,i)=>{const poly=L.polygon(l.g,{color:'#B88600',weight:3,fillColor:'#F2C53D',fillOpacity:.35}).addTo(lotLayer);
+    const lab=L.marker(l.ll,{icon:L.divIcon({className:'',iconSize:[34,34],iconAnchor:[17,17],html:`<div class="pin" style="width:34px;height:34px;font-size:16px">${i+1}</div>`})}).addTo(lotLayer);
+    [poly,lab].forEach(x=>x.on('click',()=>chooseLot(i)))});
+  map.fitBounds(L.latLngBounds([p.s,...p.lots.map(l=>l.ll)]),{padding:[40,40]});
+  toast(`Found ${p.lots.length} car lots. Tap one on the map or in the list.`);render()}
+function chooseLot(i){const p=lotPick;if(!p)return;const lot=p.lots[i];lotLayer.clearLayers();lotPick=null;
+  if(route().id!==p.routeId){S.activeRouteId=p.routeId;save()}busy=false;autoBuild({F:p.F,s:p.s,lot})}
+function cancelLotPick(){lotPick=null;lotLayer.clearLayers();render()}
+function lotLabel(l,s){const ha=l.area>=10000?(l.area/10000).toFixed(1)+' ha':Math.round(l.area/100)*100+' m²';return `${ha} · ${fmtDist(hav(s,l.ll))} away`}
+function renderLotPick(){const p=lotPick;
+  pane.innerHTML=`<div class="row" style="justify-content:space-between"><h2>Pick a parking lot</h2><button class="btn" id="lotCancel">Cancel</button></div>
+   <div class="small muted">Highlighted in yellow on the map, biggest and closest first. Pick one you know is open and empty at the time you'll go.</div>
+   ${p.lots.map((l,i)=>`<button class="entry" data-lot="${i}"><div class="top"><span><span class="num placed" style="display:inline-grid;vertical-align:middle;margin-right:8px">${i+1}</span>${esc(l.name||'Unnamed lot')}</span></div><div class="meta">${lotLabel(l,p.s)}</div></button>`).join('')}`}
+async function autoBuild(pick){const r=route(),n=stageNum(r);
   if(!n||n>6)return toast('Auto-build works on the 6 stage routes. Use search or tap the map for custom routes.');
-  if(busy)return;const c=map.getCenter(),s=[c.lat,c.lng];busy=true;render();toast('Searching OpenStreetMap near the map centre…');
+  if(busy)return;const c=map.getCenter();let s=pick?pick.s:[c.lat,c.lng];busy=true;render();if(!pick)toast('Searching OpenStreetMap near the map centre…');
   const need={1:['lot'],2:['stop','play'],3:['signals'],4:['round'],5:['ramp'],6:['lot','stop','signals','round']}[n];
-  try{const F=await fetchFeatures(need,s);const tpl=tplFor(n);let cps=[];
+  try{const F=pick?pick.F:await fetchFeatures(need,s);const tpl=tplFor(n);let cps=[];
+    if((n===1||n===6)&&!pick){const lots=F.lot.map(l=>({l,sc:l.area*Math.exp(-hav(s,l.ll)/2500)})).sort((a,b)=>b.sc-a.sc).slice(0,8).map(x=>x.l);
+      if(lots.length){showLotPicker({n,F,s,lots,routeId:r.id});return}}
     const used=[];const take=(list,from,min=150)=>{const f=list.filter(x=>!used.includes(x)&&used.every(u=>hav(u.ll,x.ll)>=min)&&hav(s,x.ll)>=80).sort((a,b)=>hav(from,a.ll)-hav(from,b.ll))[0];if(f)used.push(f);return f};
     const mk=(name,task,ll,place)=>({id:uid(),name,task:place?`${task} (${place})`:task,lat:ll?+ll[0].toFixed(6):null,lng:ll?+ll[1].toFixed(6):null});
-    if(n===1){let lot=bestLot(F,s,r.lotSkip||[]);if(!lot&&(r.lotSkip||[]).length){r.lotSkip=[];lot=bestLot(F,s)}
-      if(lot){r.lotSkip=[...(r.lotSkip||[]),lot.ll].slice(-12)}const pins=lot?lotPins(lot,s):[];cps=tpl.cps.map(([nm,tk],i)=>mk(nm,tk,pins[i],i===0&&lot?.name))}
+    if(n===1){const lot=pick?.lot;const pins=lot?lotPins(lot,s):[];cps=tpl.cps.map(([nm,tk],i)=>mk(nm,tk,pins[i],i===0&&lot?.name))}
     else if(n===2){let cur=s;const slots=['stop','stop','stop','play','allway','start'];
       cps=tpl.cps.map(([nm,tk],i)=>{const k=slots[i];let f=null;
         if(k==='start')return mk(nm,tk,s);
@@ -534,7 +552,7 @@ async function autoBuild(){const r=route(),n=stageNum(r);
     else if(n===4){let cur=s;cps=[1,2,3].map(i=>{const f=take(F.round,cur,250);if(f)cur=f.ll;
       return mk('Roundabout '+i,'Slow early and pick your lane, yield to traffic already inside, signal right before your exit.',f?.ll,f?.name)})}
     else if(n===5){const w=walkRamp(F,s);const pts=w?[w.onRamp,w.merge,w.cruise,w.exit]:[];cps=tpl.cps.map(([nm,tk],i)=>mk(nm,tk,pts[i]))}
-    else if(n===6){let cur=s;const lot=take(F.lot.filter(l=>!(r.lotSkip||[]).some(k=>hav(k,l.ll)<60)).sort((a,b)=>b.area-a.area).slice(0,8),s,0);if(lot)r.lotSkip=[...(r.lotSkip||[]),lot.ll].slice(-12);if(lot)cur=lot.ll;
+    else if(n===6){let cur=s;const lot=pick?.lot;if(lot)used.push(lot);if(lot)cur=lot.ll;
       const st=take(F.stop,cur);if(st)cur=st.ll;const sg=take(F.signals,cur,300);if(sg)cur=sg.ll;const rd=take(F.round,cur,250);
       cps=[mk('Pre-trip check','Explain the controls out loud before moving.',s),mk('Parking','Stall park forward and reverse, then a three-point turn.',lot?.ll,lot?.name),
         mk('Stop sign','Full stop behind the line, look left, right, left.',st?.ll),mk('Traffic signals','Approach a stale green ready to stop. Smooth left on green.',sg?.ll),
@@ -542,7 +560,7 @@ async function autoBuild(){const r=route(),n=stageNum(r);
     const found=cps.filter(c=>c.lat!=null).length;
     if(!found){toast('Nothing suitable found here. Move the map or tap Near me, then try again.');return}
     r.cps=cps;r.area=r.area||S.areaId;save();drawRoute();fitRoute();
-    toast(found===cps.length?`Placed ${found} pins.${n===1||n===6?' Wrong lot? Tap Auto-build again for the next one.':' Check them and drag any that look off.'}`:`Placed ${found} of ${cps.length}. Tap the map or search for the rest.`)}
+    toast(found===cps.length?`Placed ${found} pins.${' Check them and drag any that look off.'}`:`Placed ${found} of ${cps.length}. Tap the map or search for the rest.`)}
   catch(e){toast(lastOsmErr?`OpenStreetMap didn't answer (${lastOsmErr}). Try again in a minute.`:'Something went wrong reading the map data: '+e.message)}
   finally{busy=false;render()}}
 
@@ -560,7 +578,7 @@ function pinPlace(i){const p=placeResults[i],r=route();if(!p)return;let c=r.cps.
 
 /* ---------- UI ---------- */
 let tab='drive';
-document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;reportView=null;
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;reportView=null;if(lotPick)cancelLotPick();
   document.querySelectorAll('.tabs button').forEach(x=>x.setAttribute('aria-selected',x===b));if(tab!=='routes')setPlacing(false);render()});
 const pane=document.getElementById('pane');
 document.getElementById('locBtn').onclick=e=>{if(!ensureWatch())return;follow=!follow;e.currentTarget.setAttribute('aria-pressed',follow);if(follow&&lastFix)map.setView(lastFix.ll,17)};
@@ -652,7 +670,7 @@ function renderLog(){const ss=S.sessions;const mins=ss.reduce((a,s)=>a+(s.end-s.
     :`<div class="empty">No lessons yet. Finished lessons land here with time, distance, the track you drove and your notes. Tap one to see its track on the map.</div>`}
 `}
 
-function render(){if(reportView)return renderReport();({drive:renderDrive,routes:renderRoutes,skills:renderSkills,log:renderLog})[tab]()}
+function render(){if(reportView)return renderReport();if(lotPick)return renderLotPick();({drive:renderDrive,routes:renderRoutes,skills:renderSkills,log:renderLog})[tab]()}
 
 pane.addEventListener('click',e=>{const t=e.target.closest('button');if(!t)return;const r=route();const d=t.dataset;
   if(t.id==='startBtn')return startSession();
@@ -661,6 +679,8 @@ pane.addEventListener('click',e=>{const t=e.target.closest('button');if(!t)retur
   if(t.id==='saveSess')return finishSession(true);
   if(t.id==='nearMe')return nearMe();
   if(t.id==='autoBuild')return autoBuild();
+  if(t.id==='lotCancel')return cancelLotPick();
+  if(d.lot!=null)return chooseLot(+d.lot);
   if(t.id==='placeGo')return placeSearch(document.getElementById('placeQ').value);
   if(d.place!=null)return pinPlace(+d.place);
   if(t.id==='areaAdd'){savingArea=true;render();document.getElementById('areaName')?.focus();return}
