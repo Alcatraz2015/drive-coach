@@ -160,7 +160,6 @@ textarea{min-height:76px;resize:vertical}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
 const KEY='driveCoach.v1';
-const HOME=[50.900,-113.925]; // Mahogany, SE Calgary
 const ARRIVE_M=35;
 const LEVELS=['Not yet','Learning','With help','Solid'];
 const SKILLS=[
@@ -171,17 +170,17 @@ const SKILLS=[
  ['Parking',[['stall','Stall parking (forward & reverse)'],['parallel','Parallel parking'],['hill','Hill parking, wheels turned'],['threept','Three-point turn']]]
 ];
 const TEMPLATES=[
- {name:'Empty lot basics',stage:'Stage 1',goal:'A big empty lot near Mahogany: the Mahogany Village Market lot or a Seton lot before 8 am. No traffic, just the car.',
+ {name:'Empty lot basics',stage:'Stage 1',goal:'A big empty parking lot early morning or evening. No traffic, just the car.',
   cps:[['Lot entrance','Seat, mirrors, belt. Find gas, brake, signals, wipers, lights.'],['Straight run','Creep forward, stop smoothly. Repeat until stops feel gentle.'],['Wide loop','Circle the lot both ways. Hand-over-hand steering.'],['Stall row','Park forward into a stall, centred. Then reverse out.'],['Far corner','Reverse in a straight line 5 stalls, looking over shoulder.']]},
- {name:'Quiet neighbourhood',stage:'Stage 2',goal:'Inside Mahogany: the quiet crescents off Mahogany Blvd SE, stop signs and the playground zones around the lake parks.',
+ {name:'Quiet neighbourhood',stage:'Stage 2',goal:'Quiet residential crescents: stop signs, turns and playground zones. Calgary residential limit is 40 km/h.',
   cps:[['First stop sign','Full stop behind the line, count 2, look L-R-L.'],['Right turn','Signal early, slow before the turn, finish in the right lane.'],['Left turn','Signal, check oncoming, turn into the nearest lane.'],['Playground zone','Hold 30. Watch for kids between parked cars.'],['4-way stop','Who arrived first goes first. Tie: yield to the right.'],['Back home','Park at the curb, wheels within 30 cm.']]},
- {name:'Traffic lights & lanes',stage:'Stage 3',goal:'52 St SE and Seton Blvd SE: signals, two lanes each way, steady traffic.',
+ {name:'Traffic lights & lanes',stage:'Stage 3',goal:'Collector roads with signals and two lanes each way, steady traffic.',
   cps:[['First signal','Approach a stale green ready to stop.'],['Lane change','Mirror, signal, shoulder check, move. Cancel the signal.'],['Left on green','Wait in the intersection only if safe; turn when clear.'],['Right on red','Full stop first, then yield to everyone.'],['Busy stretch','Keep 2–3 s following distance. Count it out loud.']]},
- {name:'Roundabouts',stage:'Stage 4',goal:'Nearest roundabouts to Mahogany and Seton. Single lane first, then double.',
+ {name:'Roundabouts',stage:'Stage 4',goal:'Nearest roundabouts. Single lane first, then double.',
   cps:[['Approach','Slow early, pick the lane by exit before you arrive.'],['Yield line','Yield to traffic already inside, look left.'],['Exit','Signal right before your exit, check the bike lane.']]},
- {name:'Highway merge',stage:'Stage 5',goal:'Stoney Trail from the 52 St SE ramp, one exit and back. Only when stages 1–3 feel solid.',
+ {name:'Highway merge',stage:'Stage 5',goal:'Stoney Trail or Deerfoot: on at one ramp, off at the next exit and back. Only when stages 1–3 feel solid.',
   cps:[['On-ramp','Get up to highway speed on the ramp.'],['Merge point','Mirror, signal, shoulder check, find the gap, go.'],['Cruise','Hold the limit in the right lane. Scan far ahead.'],['Exit ramp','Signal early, slow down on the ramp, not on the highway.']]},
- {name:'Road test run',stage:'Stage 6',goal:'A full loop through Mahogany and Seton like the real test. You stay quiet, she drives.',
+ {name:'Road test run',stage:'Stage 6',goal:'A full loop like the real road test. You stay quiet, she drives.',
   cps:[['Pre-trip','Explain the controls out loud.'],['Parallel park','Within 30 cm of the curb, no more than 3 corrections.'],['Hill park','Wheels turned the right way, parking brake on.'],['Three-point turn','Signal, check both ways, finish in the right lane.'],['Mixed drive','Lights, school zone, lane change, finish back at start.']]}
 ];
 
@@ -193,6 +192,15 @@ function seed(){
 }
 function load(){try{const j=JSON.parse(localStorage.getItem(KEY));if(j&&Array.isArray(j.routes)&&j.routes.length)return j}catch(e){}return seed()}
 let S=load();
+const AREAS=[
+ {id:'calgary',name:'Calgary',c:[51.0447,-114.0719],z:12},
+ {id:'mahogany',name:'Mahogany (SE Calgary)',c:[50.900,-113.925],z:14},
+ {id:'airdrie',name:'Airdrie',c:[51.2917,-114.0144],z:13},
+ {id:'cochrane',name:'Cochrane',c:[51.189,-114.467],z:13},
+ {id:'okotoks',name:'Okotoks',c:[50.726,-113.975],z:13},
+ {id:'chestermere',name:'Chestermere',c:[51.050,-113.823],z:13}];
+const allAreas=()=>[...AREAS,...(S.areas||[])];
+const curArea=()=>allAreas().find(a=>a.id===S.areaId)||AREAS[0];
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toast('Could not save on this device')}}
 const route=()=>S.routes.find(r=>r.id===S.activeRouteId)||S.routes[0];
 
@@ -203,7 +211,7 @@ function fmtDist(m){return m<1000?Math.round(m)+' m':(m/1000).toFixed(1)+' km'}
 let toastT;function toast(msg){document.querySelector('.toast')?.remove();const d=document.createElement('div');d.className='toast';d.textContent=msg;document.body.appendChild(d);clearTimeout(toastT);toastT=setTimeout(()=>d.remove(),2600)}
 
 /* ---------- map ---------- */
-const map=L.map('map',{zoomControl:false,attributionControl:true}).setView(HOME,14);
+const map=L.map('map',{zoomControl:false,attributionControl:true}).setView(curArea().c,curArea().z);
 const dark=matchMedia('(prefers-color-scheme: dark)');
 let tiles;
 function setTiles(){tiles&&map.removeLayer(tiles);
@@ -228,13 +236,13 @@ function drawRoute(){
 }
 function fitRoute(){const pts=route().cps.filter(c=>c.lat!=null).map(c=>[c.lat,c.lng]);
   if(sess&&sess.track.length)pts.push(...sess.track);
-  if(pts.length===1)map.setView(pts[0],16);else if(pts.length)map.fitBounds(pts,{padding:[40,40]});else{map.setView(HOME,14);toast('No pins yet. Place them in Routes.')}}
+  if(pts.length===1)map.setView(pts[0],16);else if(pts.length)map.fitBounds(pts,{padding:[40,40]});else{map.setView(curArea().c,curArea().z);toast('No pins yet. Place them in Routes.')}}
 
 let placing=false;
 map.on('click',e=>{
   if(!placing)return;const r=route();let c=r.cps.find(c=>c.lat==null);
   if(!c){c={id:uid(),name:'Checkpoint '+(r.cps.length+1),task:'',lat:null,lng:null};r.cps.push(c)}
-  c.lat=e.latlng.lat;c.lng=e.latlng.lng;save();drawRoute();render();
+  c.lat=e.latlng.lat;c.lng=e.latlng.lng;if(!r.area)r.area=S.areaId||'calgary';save();drawRoute();render();
   const left=r.cps.filter(c=>c.lat==null).length;
   toast(left?`Pinned “${c.name}”. ${left} to go.`:`Pinned “${c.name}”. Tap again to add more.`);
 });
@@ -444,12 +452,24 @@ function mapsLink(r){const p=r.cps.filter(c=>c.lat!=null).map(c=>`${c.lat.toFixe
   const dest=p[p.length-1],way=p.slice(0,-1).slice(0,9);
   return `https://www.google.com/maps/dir/?api=1&destination=${dest}${way.length?'&waypoints='+encodeURIComponent(way.join('|')):''}&travelmode=driving`}
 
-function routeSelect(){return `<select id="routeSel" aria-label="Lesson route">${S.routes.map(r=>`<option value="${r.id}" ${r.id===route().id?'selected':''}>${esc(r.stage)} · ${esc(r.name)}</option>`).join('')}</select>`}
+function routeSelect(){return `<select id="routeSel" aria-label="Lesson route">${S.routes.map(r=>`<option value="${r.id}" ${r.id===route().id?'selected':''}>${esc(r.stage)} · ${esc(r.name)}${r.area?' · '+esc((allAreas().find(x=>x.id===r.area)||{}).name||''):''}</option>`).join('')}</select>`}
 function cpList(r,editable){return `<ul class="cps">${r.cps.map((c,i)=>{const done=sess&&sess.done.includes(c.id);
   const cls=done?'done':c.lat!=null?'placed':'';
   if(editable)return `<li><span class="num ${cls}">${i+1}</span><div class="cp-edit"><input type="text" id="n_${c.id}" data-cp="${c.id}" data-f="name" value="${esc(c.name)}" aria-label="Checkpoint name"><input type="text" id="t_${c.id}" data-cp="${c.id}" data-f="task" value="${esc(c.task)}" placeholder="What to practise here" aria-label="Task"><span class="small muted">${c.lat!=null?'Pinned · drag the pin to move it':'Not on the map yet'}</span></div><div class="stack"><button class="iconbtn" data-up="${c.id}" aria-label="Move up">↑</button><button class="iconbtn" data-unpin="${c.id}" aria-label="Remove pin">⌫</button><button class="iconbtn" data-del="${c.id}" aria-label="Delete checkpoint">✕</button></div></li>`;
   return `<li><span class="num ${cls}">${i+1}</span><div><div class="cp-name">${esc(c.name)}</div><div class="cp-task">${esc(c.task)}</div></div>${sess&&c.lat!=null&&!done?`<button class="btn small" data-done="${c.id}">Done</button>`:'<span></span>'}</li>`}).join('')}</ul>`}
 
+let savingArea=false;
+function areaBar(){const a=curArea(),custom=!AREAS.some(x=>x.id===a.id);
+  return `<div class="stack"><h3>Area</h3><div class="row" style="flex-wrap:nowrap"><select id="areaSel" aria-label="Area">${allAreas().map(x=>`<option value="${x.id}" ${x.id===a.id?'selected':''}>${esc(x.name)}</option>`).join('')}</select>
+   <button class="btn" id="nearMe" style="white-space:nowrap">Near me</button></div>
+   ${savingArea?`<div class="row" style="flex-wrap:nowrap"><input type="text" id="areaName" placeholder="Name, e.g. Seton" aria-label="New area name"><button class="btn primary" id="areaSave">Save</button></div><div class="small muted">Saves the current map view as an area.</div>`
+   :`<div class="row"><button class="btn small" id="areaAdd">Save this map view as an area</button>${custom?'<button class="btn small danger" id="areaDel">Remove area</button>':''}</div>`}</div>`}
+function goArea(id){S.areaId=id;save();const a=curArea();map.setView(a.c,a.z);render()}
+function nearMe(){if(!navigator.geolocation)return toast('This browser has no GPS access');toast('Finding you…');
+  navigator.geolocation.getCurrentPosition(p=>{const ll=[p.coords.latitude,p.coords.longitude];
+    let best=null,bd=1e12;allAreas().forEach(a=>{const d=hav(ll,a.c);if(d<bd){bd=d;best=a}});
+    if(best&&bd<15000){S.areaId=best.id;save();toast('Area: '+best.name)}else toast('No saved area here. Save this view to add one.');
+    map.setView(ll,15);ensureWatch();render()},e=>toast(e.code===1?'Location blocked. Allow it in browser settings.':'Could not get a GPS fix'),{enableHighAccuracy:true,timeout:15000})}
 function renderDrive(){const r=route();const placed=r.cps.filter(c=>c.lat!=null).length;
   if(ending){const el=Date.now()-sess.start;
     pane.innerHTML=`<h2>How did it go?</h2>
@@ -461,7 +481,7 @@ function renderDrive(){const r=route();const placed=r.cps.filter(c=>c.lat!=null)
      <div class="small muted">Tip: open Skills and update anything that moved today.</div>
      <div class="row"><button class="btn primary big" id="saveSess">Save lesson</button></div>
      <button class="btn danger" id="discardSess">Discard this lesson</button>`;return}
-  if(!sess){pane.innerHTML=`${routeSelect()}
+  if(!sess){pane.innerHTML=`${areaBar()}${routeSelect()}
      <div class="plate"><div class="k">${esc(r.stage)}</div><div class="n">${esc(r.name)}</div><div class="g">${esc(r.goal)}</div></div>
      ${placed?'':`<div class="empty">This route has no pins yet.<br><button class="btn primary" id="goPlace" style="margin-top:10px">Place checkpoints on the map</button></div>`}
      <button class="btn primary big" id="startBtn">Start lesson</button>
@@ -487,7 +507,7 @@ function updateHud(){if(!sess||ending)return;const q=id=>document.getElementById
   q('hKm')&&(q('hKm').textContent=sess.km.toFixed(1));q('hNext')&&(q('hNext').textContent=sess.nextDist!=null?fmtDist(sess.nextDist):'—')}
 
 function renderRoutes(){const r=route();
-  pane.innerHTML=`${routeSelect()}
+  pane.innerHTML=`${areaBar()}${routeSelect()}
    <div class="stack"><input type="text" id="rName" value="${esc(r.name)}" aria-label="Route name">
    <div class="row" style="flex-wrap:nowrap"><input type="text" id="rStage" value="${esc(r.stage)}" aria-label="Stage" style="max-width:110px"><input type="text" id="rGoal" value="${esc(r.goal)}" aria-label="Goal" placeholder="Goal for this route"></div></div>
    <button class="btn ${placing?'primary':''} big" id="placeBtn">${placing?'Done placing pins':'Tap map to place pins'}</button>
@@ -518,6 +538,13 @@ pane.addEventListener('click',e=>{const t=e.target.closest('button');if(!t)retur
   if(t.id==='goPlace'){tab='routes';document.querySelectorAll('.tabs button').forEach(x=>x.setAttribute('aria-selected',x.dataset.tab==='routes'));setPlacing(true);return render()}
   if(t.id==='endBtn'){ending=true;return render()}
   if(t.id==='saveSess')return finishSession(true);
+  if(t.id==='nearMe')return nearMe();
+  if(t.id==='areaAdd'){savingArea=true;render();document.getElementById('areaName')?.focus();return}
+  if(t.id==='areaSave'){const n=document.getElementById('areaName').value.trim();if(!n)return toast('Give the area a name');
+    const c=map.getCenter();const a={id:'a_'+uid(),name:n,c:[+c.lat.toFixed(5),+c.lng.toFixed(5)],z:map.getZoom()};
+    (S.areas=S.areas||[]).push(a);S.areaId=a.id;savingArea=false;save();toast('Saved area '+n);return render()}
+  if(t.id==='areaDel'){if(!t.dataset.sure){t.dataset.sure=1;t.textContent='Tap again to remove';return}
+    S.areas=(S.areas||[]).filter(x=>x.id!==S.areaId);S.areaId='calgary';save();return goArea('calgary')}
   if(t.id==='repClose'){reportView=null;return render()}
   if(t.id==='repPng')return sharePng();
   if(t.id==='repPdf')return sharePdf();
@@ -531,7 +558,7 @@ pane.addEventListener('click',e=>{const t=e.target.closest('button');if(!t)retur
   if(d.up){const i=r.cps.findIndex(c=>c.id===d.up);if(i>0){[r.cps[i-1],r.cps[i]]=[r.cps[i],r.cps[i-1]];save();drawRoute();render()}return}
   if(d.unpin){const c=r.cps.find(c=>c.id===d.unpin);c.lat=c.lng=null;save();drawRoute();return render()}
   if(d.del){r.cps=r.cps.filter(c=>c.id!==d.del);save();drawRoute();return render()}
-  if(t.id==='newRoute'){const n={id:uid(),name:'My route',stage:'Custom',goal:'',cps:[]};S.routes.push(n);S.activeRouteId=n.id;save();setPlacing(true);drawRoute();return render()}
+  if(t.id==='newRoute'){const n={id:uid(),name:'My route',stage:'Custom',goal:'',cps:[],area:S.areaId||'calgary'};S.routes.push(n);S.activeRouteId=n.id;save();setPlacing(true);drawRoute();return render()}
   if(t.id==='delRoute'){if(S.routes.length<2)return toast('Keep at least one route');if(!t.dataset.sure){t.dataset.sure=1;t.textContent='Tap again to delete';return}
     S.routes=S.routes.filter(x=>x.id!==r.id);S.activeRouteId=S.routes[0].id;save();drawRoute();return render()}
   if(d.sk){const l=+d.l;S.skills[d.sk]=S.skills[d.sk]===l?l-1:l;save();return render()}
@@ -542,6 +569,7 @@ pane.addEventListener('click',e=>{const t=e.target.closest('button');if(!t)retur
   if(t.id==='importBtn')return document.getElementById('importFile').click();
 });
 pane.addEventListener('change',e=>{const t=e.target;const r=route();
+  if(t.id==='areaSel')return goArea(t.value);
   if(t.id==='routeSel'){if(sess)return toast('End the lesson before switching routes'),render();S.activeRouteId=t.value;save();histLayer.clearLayers();drawRoute();fitRoute();return render()}
 });
 pane.addEventListener('input',e=>{const t=e.target;const r=route();
