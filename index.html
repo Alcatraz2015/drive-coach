@@ -105,6 +105,14 @@ a.btn{text-decoration:none;display:inline-block;color:var(--fg)}
 .lvl button.on{background:var(--sign);border-color:var(--sign)}
 .lvlname{font:800 11px/1 var(--display);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:right;margin-top:4px}
 
+.skill{align-items:start}.skill>details{min-width:0}
+.coach summary{cursor:pointer;list-style:none;padding:4px 0}
+.coach summary::-webkit-details-marker{display:none}
+.coach summary::after{content:" ›";color:var(--muted);font-weight:700}
+.coach[open] summary::after{content:" ⌄"}
+.coachbody{margin-top:6px;padding:10px 12px;background:var(--surface2);border-radius:8px;font-size:15px}
+.coachbody .ck{font:800 11px/1 var(--display);letter-spacing:.1em;text-transform:uppercase;color:var(--sign);margin:4px 0 6px}
+.coachbody ul{margin:0 0 8px;padding-left:18px}.coachbody li{margin:3px 0}.coachbody p{margin:0}
 /* log */
 .sum{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .entry{border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--surface);text-align:left;width:100%}
@@ -164,6 +172,32 @@ textarea{min-height:76px;resize:vertical}
 <script>
 const KEY='driveCoach.v1';
 const ARRIVE_M=35;
+const COACH={
+ controls:{check:['Wrists rest on top of the wheel with arms out, knees slightly bent','Side mirrors just show the edge of the car','Headrest roughly level with the ears, belt across the shoulder, not the neck'],teach:'Have her do the full setup out loud before every drive until it happens without thinking.'},
+ startstop:{check:['Heel stays on the floor and pivots between pedals, right foot only','Brakes early and gently, then eases off just before stopping so the car does not jerk','Stops at the line she picked, not past it'],teach:'"Squeeze, don\'t stomp." Pick a line in the lot and have her stop exactly on it, over and over.'},
+ steer:{check:['Hands at 9 and 3','Push-pull or hand-over-hand in turns, no palming the wheel','Lets the wheel slide back smoothly after a turn instead of letting go'],teach:'Eyes lead the hands. Tell her to look where she wants to go, not at the hood.'},
+ reverse:{check:['Looks back over the right shoulder through the rear window, not just the camera','Walking speed, foot covering the brake','Small steering corrections'],teach:'The back of the car goes the way she turns the top of the wheel. Practise in the lot before any street.'},
+ rturn:{check:['Signals well before the turn','Slows down before turning, not during','Stays close to the curb and finishes in the nearest lane','Checks for people and bikes on the right'],teach:'Brake while the wheels are straight, then gently accelerate out of the turn.'},
+ lturn:{check:['Signals and checks oncoming traffic','Keeps wheels straight while waiting, so a hit from behind does not push her into traffic','Turns into the nearest lane'],teach:'Have her say "now" out loud on each gap. Agree before she commits until her judgment matches yours.'},
+ stops:{check:['Complete stop behind the stop line or crosswalk, the car settles back','If the view is blocked, creeps forward and stops again','Looks left, right, left before going'],teach:'Have her count "one-thousand-one" at zero km/h. Rolling stops are a common road test fail.'},
+ fourway:{check:['First to stop goes first','Arrive at the same time: yield to the vehicle on the right','Watches for drivers who do not follow the rules'],teach:'Have her name out loud who goes next before anyone moves.'},
+ unprot:{check:['Waits with wheels straight','Turns only into a gap she is sure of','If the light changes while she waits in the intersection, finishes the turn once oncoming traffic stops'],teach:'Start at quiet intersections. Point out the gaps she could have taken without pushing her into them.'},
+ amber:{check:['Stops if she can do it safely','Goes only if she is past the point where stopping would be sudden','Watches pedestrian countdowns to spot a "stale" green'],teach:'On approach, ask "stop or go if it turns now?" so the decision is made before the light changes.'},
+ shoulder:{check:['Quick head turn to the blind spot, eyes back forward within a second','Before every lane change, pulling away from the curb, and turning across a bike lane'],teach:'Say "shoulder?" each time until she does it without the prompt. Missing it is one of the most common road test faults.'},
+ lanechg:{check:['Mirror, signal, shoulder check, then move','Moves over gradually at steady speed','Cancels the signal after'],teach:'Use the order SMOG: Signal, Mirrors, Over the shoulder, Go.'},
+ following:{check:['When the car ahead passes a pole, she reaches it 2 or more seconds later','Leaves 4 or more seconds on snow, ice or rain'],teach:'Make it a game: she counts out loud whenever you say "count".'},
+ speed:{check:['Calgary residential streets are 40 km/h unless signed otherwise','Playground zones are 30 km/h, 7:30 a.m. to 9 p.m. every day','Matches traffic flow without going over'],teach:'Have her glance at the speedometer every block and say the speed out loud.'},
+ zones:{check:['Spots playground and school zone signs on her own','Is down to 30 km/h when she reaches the sign, not after','Watches for kids between parked cars'],teach:'Ask "what zone are we in?" every time you pass a sign.'},
+ round:{check:['Slows down early and picks the lane by exit before entering','Yields to traffic already inside, which comes from the left','Never stops inside, signals right before her exit'],teach:'Drive the roundabout yourself first while narrating, then have her do single-lane ones until it feels boring.'},
+ merge:{check:['Gets up to highway speed on the ramp','Signal, mirror, shoulder check, then merges into a gap','Does not stop at the end of the ramp unless there is no other choice'],teach:'Practise at quiet times like Sunday mornings. Hesitating on the ramp is the danger, not speed.'},
+ exit:{check:['Signals early and moves into the exit lane','Slows down on the ramp, not on the highway','If she misses the exit, takes the next one, never brakes or reverses'],teach:'Say the exit name a kilometre ahead so she has time to plan.'},
+ night:{check:['Headlights on from sunset to sunrise and whenever it is hard to see','High beams off when a car is coming or when following close behind'],teach:'Do the first night drive on a route she already knows well from daytime.'},
+ winter:{check:['Smooth gentle steering, braking and gas','Brakes before curves, not in them','Clears all snow and ice off the car before driving'],teach:'After the first snowfall, practise braking and skid feel in an empty lot at low speed.'},
+ stall:{check:['Ends up centred in the stall, wheels straight','Signals and checks around before backing out','Moves slowly while backing out and gives way to traffic'],teach:'Give her reference points, like when the stall line lines up with her mirror, start turning.'},
+ parallel:{check:['Signals and stops beside the front car, about 1 metre away','Looks over her shoulder while reversing','Finishes close to the curb (about 30 cm) and not touching it'],teach:'Use two cones or empty boxes in the lot before trying it between real cars.'},
+ hill:{check:['Downhill with a curb: wheels turned toward the curb','Uphill with a curb: wheels turned away from the curb','No curb: wheels toward the edge of the road','Parking brake on'],teach:'"Up, up and away": uphill, wheels away from the curb.'},
+ threept:{check:['Only on a quiet street where she can see far both ways','Signals, checks both ways, turns full lock','Stops before touching the curb each time, looks behind when reversing'],teach:'Talk it through as three separate moves before she starts.'}
+};
 const LEVELS=['Not yet','Learning','With help','Solid'];
 const SKILLS=[
  ['Car basics',[['controls','Seat, mirrors & controls check'],['startstop','Smooth starts & stops'],['steer','Steering & hand position'],['reverse','Reversing in a straight line']]],
@@ -656,10 +690,10 @@ function renderRoutes(){const r=route();
    <h3>Backup</h3><div class="row"><button class="btn" id="exportBtn">Export data</button><button class="btn" id="importBtn">Import data</button></div>`}
 
 function renderSkills(){const all=SKILLS.flatMap(g=>g[1]);const tot=all.reduce((a,[k])=>a+(S.skills[k]||0),0),max=all.length*3;
-  pane.innerHTML=`<div class="stack"><div class="row" style="justify-content:space-between"><h2>Skill board</h2><span class="muted small">${Math.round(tot/max*100)}% to road-test ready</span></div>
+  pane.innerHTML=`<div class="stack"><div class="row" style="justify-content:space-between"><h2>Skill board</h2><span class="muted small">${Math.round(tot/max*100)}% to road-test ready</span></div><div class="small muted">Tap a skill for what to check and how to teach it.</div>
    <div class="progressbar"><i style="width:${tot/max*100}%"></i></div></div>
    ${SKILLS.map(([g,items])=>`<div class="skillgroup"><h3>${g}</h3>${items.map(([k,n])=>{const v=S.skills[k]||0;
-     return `<div class="skill"><div>${n}</div><div><div class="lvl" role="group" aria-label="${esc(n)}">${[1,2,3].map(l=>`<button data-sk="${k}" data-l="${l}" class="${v>=l?'on':''}" aria-label="${LEVELS[l]}"></button>`).join('')}</div><div class="lvlname">${LEVELS[v]}</div></div></div>`}).join('')}</div>`).join('')}`}
+     const co=COACH[k];return `<div class="skill"><details class="coach"><summary>${n}</summary>${co?`<div class="coachbody"><div class="ck">Check</div><ul>${co.check.map(x=>`<li>${esc(x)}</li>`).join('')}</ul><div class="ck">Teach</div><p>${esc(co.teach)}</p></div>`:''}</details><div><div class="lvl" role="group" aria-label="${esc(n)}">${[1,2,3].map(l=>`<button data-sk="${k}" data-l="${l}" class="${v>=l?'on':''}" aria-label="${LEVELS[l]}"></button>`).join('')}</div><div class="lvlname">${LEVELS[v]}</div></div></div>`}).join('')}</div>`).join('')}`}
 
 function renderLog(){const ss=S.sessions;const mins=ss.reduce((a,s)=>a+(s.end-s.start)/60000,0),km=ss.reduce((a,s)=>a+s.km,0);
   const feel=['','Rough','Nervous','Okay','Good','Great'];
