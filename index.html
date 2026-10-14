@@ -480,7 +480,7 @@ async function fetchFeatures(kinds,s){
     if(t.highway==='stop')(t.stop==='all'?F.allway:F.stop).push(f);
     else if(t.highway==='traffic_signals')F.signals.push(f);
     else if(t.junction)F.round.push(f);
-    else if(t.amenity==='parking'){f.area=polyArea(g);if(f.area>=6000)F.lot.push(f)}
+    else if(t.amenity==='parking'){f.area=polyArea(g);if(f.area>=6000&&carLot(t))F.lot.push(f)}
     else if(t.leisure==='playground')F.play.push(f);
     else if(/_link$/.test(t.highway||''))F.link.push(f);
     else if(/^(motorway|trunk)$/.test(t.highway||''))F.main.push(f)}
@@ -488,11 +488,18 @@ async function fetchFeatures(kinds,s){
   F.stop=F.stop.concat(F.allway);
   return F}
 
+const NOT_CAR=/\b(rv|r\.v\.|recreational|truck|trucks|semi|trailer|trailers|bus|buses|transit|boat|storage|motorhome|caravan|camper|staff|employee|permit|fleet|equipment|towing|impound|loading|dealer)\b/i;
+function carLot(t){const des=v=>/^(designated|only)$/.test(v||'');
+  if(NOT_CAR.test([t.name,t.description,t.operator,t.note].filter(Boolean).join(' ')))return false;
+  if(des(t.hgv)||des(t.motorhome)||des(t.caravan)||des(t.bus)||des(t.coach)||t['parking:hgv']||t.motorcar==='no'||t.motor_vehicle==='no')return false;
+  if(/^(private|no|permit|delivery|employees|staff)$/.test(t.access||''))return false;
+  if(/^(underground|multi-storey|rooftop|street_side|lane|on_street)$/.test(t.parking||''))return false;
+  return true}
 function lotPins(lot,start){const la=lot.g.map(p=>p[0]),lo=lot.g.map(p=>p[1]);const b=[Math.min(...la),Math.max(...la),Math.min(...lo),Math.max(...lo)];
   const c=lot.ll,ins=p=>[c[0]+(p[0]-c[0])*.55,c[1]+(p[1]-c[1])*.55];
   const corners=[[b[1],b[2]],[b[1],b[3]],[b[0],b[3]],[b[0],b[2]]].map(ins).sort((p,q)=>hav(start,p)-hav(start,q));
   return [corners[0],c,corners[1],corners[2],corners[3]]}
-function bestLot(F,s){return F.lot.map(l=>({l,sc:l.area*Math.exp(-hav(s,l.ll)/2000)})).sort((a,b)=>b.sc-a.sc)[0]?.l}
+function bestLot(F,s,skip=[]){return F.lot.filter(l=>!skip.some(k=>hav(k,l.ll)<60)).map(l=>({l,sc:l.area*Math.exp(-hav(s,l.ll)/2000)})).sort((a,b)=>b.sc-a.sc)[0]?.l}
 function walkRamp(F,s){
   const mainSet=new Set();F.main.forEach(w=>w.g.forEach(p=>mainSet.add(ck(p))));
   const on=F.link.filter(l=>mainSet.has(ck(l.g[l.g.length-1]))&&!mainSet.has(ck(l.g[0])));
@@ -516,7 +523,8 @@ async function autoBuild(){const r=route(),n=stageNum(r);
   try{const F=await fetchFeatures(need,s);const tpl=tplFor(n);let cps=[];
     const used=[];const take=(list,from,min=150)=>{const f=list.filter(x=>!used.includes(x)&&used.every(u=>hav(u.ll,x.ll)>=min)&&hav(s,x.ll)>=80).sort((a,b)=>hav(from,a.ll)-hav(from,b.ll))[0];if(f)used.push(f);return f};
     const mk=(name,task,ll,place)=>({id:uid(),name,task:place?`${task} (${place})`:task,lat:ll?+ll[0].toFixed(6):null,lng:ll?+ll[1].toFixed(6):null});
-    if(n===1){const lot=bestLot(F,s);const pins=lot?lotPins(lot,s):[];cps=tpl.cps.map(([nm,tk],i)=>mk(nm,tk,pins[i],i===0&&lot?.name))}
+    if(n===1){let lot=bestLot(F,s,r.lotSkip||[]);if(!lot&&(r.lotSkip||[]).length){r.lotSkip=[];lot=bestLot(F,s)}
+      if(lot){r.lotSkip=[...(r.lotSkip||[]),lot.ll].slice(-12)}const pins=lot?lotPins(lot,s):[];cps=tpl.cps.map(([nm,tk],i)=>mk(nm,tk,pins[i],i===0&&lot?.name))}
     else if(n===2){let cur=s;const slots=['stop','stop','stop','play','allway','start'];
       cps=tpl.cps.map(([nm,tk],i)=>{const k=slots[i];let f=null;
         if(k==='start')return mk(nm,tk,s);
@@ -526,7 +534,7 @@ async function autoBuild(){const r=route(),n=stageNum(r);
     else if(n===4){let cur=s;cps=[1,2,3].map(i=>{const f=take(F.round,cur,250);if(f)cur=f.ll;
       return mk('Roundabout '+i,'Slow early and pick your lane, yield to traffic already inside, signal right before your exit.',f?.ll,f?.name)})}
     else if(n===5){const w=walkRamp(F,s);const pts=w?[w.onRamp,w.merge,w.cruise,w.exit]:[];cps=tpl.cps.map(([nm,tk],i)=>mk(nm,tk,pts[i]))}
-    else if(n===6){let cur=s;const lot=take(F.lot.sort((a,b)=>b.area-a.area).slice(0,8),s,0);if(lot)cur=lot.ll;
+    else if(n===6){let cur=s;const lot=take(F.lot.filter(l=>!(r.lotSkip||[]).some(k=>hav(k,l.ll)<60)).sort((a,b)=>b.area-a.area).slice(0,8),s,0);if(lot)r.lotSkip=[...(r.lotSkip||[]),lot.ll].slice(-12);if(lot)cur=lot.ll;
       const st=take(F.stop,cur);if(st)cur=st.ll;const sg=take(F.signals,cur,300);if(sg)cur=sg.ll;const rd=take(F.round,cur,250);
       cps=[mk('Pre-trip check','Explain the controls out loud before moving.',s),mk('Parking','Stall park forward and reverse, then a three-point turn.',lot?.ll,lot?.name),
         mk('Stop sign','Full stop behind the line, look left, right, left.',st?.ll),mk('Traffic signals','Approach a stale green ready to stop. Smooth left on green.',sg?.ll),
@@ -534,7 +542,7 @@ async function autoBuild(){const r=route(),n=stageNum(r);
     const found=cps.filter(c=>c.lat!=null).length;
     if(!found){toast('Nothing suitable found here. Move the map or tap Near me, then try again.');return}
     r.cps=cps;r.area=r.area||S.areaId;save();drawRoute();fitRoute();
-    toast(found===cps.length?`Placed ${found} pins. Check them and drag any that look off.`:`Placed ${found} of ${cps.length}. Tap the map or search for the rest.`)}
+    toast(found===cps.length?`Placed ${found} pins.${n===1||n===6?' Wrong lot? Tap Auto-build again for the next one.':' Check them and drag any that look off.'}`:`Placed ${found} of ${cps.length}. Tap the map or search for the rest.`)}
   catch(e){toast(lastOsmErr?`OpenStreetMap didn't answer (${lastOsmErr}). Try again in a minute.`:'Something went wrong reading the map data: '+e.message)}
   finally{busy=false;render()}}
 
