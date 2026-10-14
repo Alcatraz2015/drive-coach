@@ -113,6 +113,8 @@ a.btn{text-decoration:none;display:inline-block;color:var(--fg)}
 .coachbody{margin-top:6px;padding:10px 12px;background:var(--surface2);border-radius:8px;font-size:15px}
 .coachbody .ck{font:800 11px/1 var(--display);letter-spacing:.1em;text-transform:uppercase;color:var(--sign);margin:4px 0 6px}
 .coachbody ul{margin:0 0 8px;padding-left:18px}.coachbody li{margin:3px 0}.coachbody p{margin:0}
+label.small{display:grid;gap:4px;color:var(--muted)}
+.plate .btn{background:transparent;color:var(--sign-ink);border:2px solid var(--sign-ink)}
 /* log */
 .sum{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .entry{border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--surface);text-align:left;width:100%}
@@ -122,7 +124,7 @@ a.btn{text-decoration:none;display:inline-block;color:var(--fg)}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
 .chip{border:1px solid var(--line);background:var(--surface2);border-radius:99px;padding:7px 12px;font-weight:700;font-size:14px}
 .chip[aria-pressed="true"]{background:var(--sign);color:var(--sign-ink);border-color:var(--sign)}
-input[type=text],textarea,select{width:100%;border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:9px 10px}
+input[type=text],input[type=date],textarea,select{width:100%;border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:9px 10px}
 textarea{min-height:76px;resize:vertical}
 .cp-edit{display:grid;gap:6px;min-width:0}
 .cp-edit input{padding:7px 9px;font-size:15px}
@@ -229,6 +231,36 @@ function seed(){
 }
 function load(){try{const j=JSON.parse(localStorage.getItem(KEY));if(j&&Array.isArray(j.routes)&&j.routes.length)return j}catch(e){}return seed()}
 let S=load();
+/* ---------- profiles (current profile's lessons live in S.sessions / S.skills; others in S.pdata) ---------- */
+function migrate(x){if(!x.profiles){x.profiles=[{id:'p1',name:'Learner',since:'',testDate:'',goalHours:''}];x.profileId='p1';x.pdata={}}
+  x.sessions=x.sessions||[];x.skills=x.skills||{};x.pdata=x.pdata||{};return x}
+migrate(S);
+const prof=()=>S.profiles.find(p=>p.id===S.profileId)||S.profiles[0];
+function switchProfile(id){if(id===S.profileId)return;S.pdata[S.profileId]={sessions:S.sessions,skills:S.skills};
+  const d=S.pdata[id]||{sessions:[],skills:{}};S.sessions=d.sessions;S.skills=d.skills;delete S.pdata[id];S.profileId=id;
+  Object.keys(reportCache).forEach(k=>delete reportCache[k]);histLayer.clearLayers();logFilter='all';save();render();toast('Now tracking '+prof().name)}
+function profStats(p,sessions,skills){const hrs=sessions.reduce((a,s)=>a+(s.end-s.start)/3.6e6,0);const all=SKILLS.flatMap(g=>g[1]);
+  const pct=Math.round(all.reduce((a,[k])=>a+(skills[k]||0),0)/(all.length*3)*100);
+  const days=p.testDate?Math.ceil((new Date(p.testDate+'T12:00')-Date.now())/864e5):null;return{hrs,pct,days,n:sessions.length}}
+let editingProfile=false;
+function profileCard(){const p=prof(),st=profStats(p,S.sessions,S.skills),goal=+p.goalHours||0;
+  const since=p.since?Math.floor((Date.now()-new Date(p.since+'T12:00'))/864e5):null;
+  if(editingProfile)return `<div class="stack" style="border:1px solid var(--line);border-radius:12px;padding:12px">
+    <h3>Learner profile</h3>
+    <label class="small">Name<input type="text" id="pfName" value="${esc(p.name)}"></label>
+    <label class="small">Learner's licence since<input type="date" id="pfSince" value="${esc(p.since)}"></label>
+    <label class="small">Road test date (if booked)<input type="date" id="pfTest" value="${esc(p.testDate)}"></label>
+    <label class="small">Practice hours goal<input type="text" inputmode="numeric" id="pfGoal" value="${esc(p.goalHours)}" placeholder="e.g. 40"></label>
+    <div class="row"><button class="btn primary" id="pfDone">Done</button>${S.profiles.length>1?'<button class="btn danger" id="pfDel" style="margin-left:auto">Delete profile</button>':''}</div></div>`;
+  return `<div class="plate" style="display:grid;gap:8px">
+    <div class="row" style="justify-content:space-between;flex-wrap:nowrap"><div style="min-width:0"><div class="k">Learner</div><div class="n">${esc(p.name)}</div></div><button class="btn small" id="pfEdit">Edit</button></div>
+    <div class="g">${st.n} lesson${st.n===1?'':'s'} · ${st.hrs.toFixed(1)}${goal?' / '+goal:''} h · skills ${st.pct}%${st.days!=null?` · road test ${st.days>0?'in '+st.days+' days':st.days===0?'today':'passed date'}`:''}${since!=null&&since>=0?` · learning ${since} days`:''}</div>
+    ${goal?`<div class="progressbar" style="background:rgb(255 255 255/.25)"><i style="width:${Math.min(100,st.hrs/goal*100)}%;background:var(--sign-ink)"></i></div>`:''}</div>
+   <div class="row" style="flex-wrap:nowrap">${S.profiles.length>1?`<select id="pfSel" aria-label="Profile">${S.profiles.map(x=>`<option value="${x.id}" ${x.id===p.id?'selected':''}>${esc(x.name)}</option>`).join('')}</select>`:''}<button class="btn" id="pfNew" style="white-space:nowrap">New profile</button></div>`}
+function backupNudge(){const last=S.lastBackup||0,n=S.sessions.length+Object.values(S.pdata).reduce((a,d)=>a+(d.sessions||[]).length,0);
+  if(!n)return '';const days=Math.floor((Date.now()-last)/864e5);
+  return days>=14?`<div class="next" style="grid-template-columns:1fr auto"><div class="small">${last?`Last backup ${days} days ago.`:'No backup yet.'} Lessons live only on this phone.</div><button class="btn small" id="exportBtn">Back up</button></div>`:''}
+
 const AREAS=[
  {id:'calgary',name:'Calgary',c:[51.0447,-114.0719],z:12},
  {id:'mahogany',name:'Mahogany (SE Calgary)',c:[50.900,-113.925],z:14},
@@ -386,7 +418,7 @@ async function buildReport(s,tilesOn=true){
   const cps=s.cps||[], flags=(s.flags||[]).map((f,i)=>({...f,i:i+1})), bad=flags.filter(f=>!FLAGS[f.label]?.good), good=flags.filter(f=>FLAGS[f.label]?.good);
   // header
   c.fillStyle=RC.sign;c.fillRect(0,0,W,210);c.strokeStyle='#fff';c.lineWidth=4;rrect(c,14,14,W-28,182,14);c.stroke();
-  c.fillStyle='#fff';c.font=fnt(800,20,'d');c.fillText('DRIVE COACH · LESSON REPORT',P,64);
+  c.fillStyle='#fff';c.font=fnt(800,20,'d');c.fillText(('DRIVE COACH · LESSON REPORT · '+(prof().name||'')).toUpperCase(),P,64);
   c.font=fnt(900,52,'d');c.fillText(s.routeName||'Lesson',P,128);
   const d=new Date(s.start);c.font=fnt(400,24,'b');
   c.fillText(`${d.toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric',year:'numeric'})} · ${d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})}`,P,172);
@@ -657,7 +689,7 @@ function renderDrive(){const r=route();const placed=r.cps.filter(c=>c.lat!=null)
      <div class="small muted">Tip: open Skills and update anything that moved today.</div>
      <div class="row"><button class="btn primary big" id="saveSess">Save lesson</button></div>
      <button class="btn danger" id="discardSess">Discard this lesson</button>`;return}
-  if(!sess){pane.innerHTML=`${areaBar()}${routeSelect()}
+  if(!sess){pane.innerHTML=`<div class="small muted">Learner: <b>${esc(prof().name)}</b>${S.profiles.length>1?' · switch in the Log tab':''}</div>${areaBar()}${routeSelect()}
      <div class="plate"><div class="k">${esc(r.stage)}</div><div class="n">${esc(r.name)}</div><div class="g">${esc(r.goal)}</div></div>
      ${placed?'':`<div class="empty">This route has no pins yet.<br><div class="row" style="justify-content:center;margin-top:10px"><button class="btn primary" id="autoBuild" ${busy?'disabled':''}>${busy?'Searching…':'Auto-build pins nearby'}</button><button class="btn" id="goPlace">Place them myself</button></div></div>`}
      <button class="btn primary big" id="startBtn">Start lesson</button>
@@ -703,10 +735,10 @@ function renderSkills(){const all=SKILLS.flatMap(g=>g[1]);const tot=all.reduce((
 
 let logFilter='all';
 const stageOf=s=>s.stage||(S.routes.find(r=>r.id===s.routeId)||{}).stage||'Custom';
-function renderLog(){const stages=[...new Set(S.sessions.map(stageOf))].sort();if(logFilter!=='all'&&!stages.includes(logFilter))logFilter='all';
+function renderLog(){const head=profileCard()+backupNudge();const stages=[...new Set(S.sessions.map(stageOf))].sort();if(logFilter!=='all'&&!stages.includes(logFilter))logFilter='all';
   const ss=S.sessions.filter(s=>logFilter==='all'||stageOf(s)===logFilter);
   const mins=ss.reduce((a,s)=>a+(s.end-s.start)/60000,0),km=ss.reduce((a,s)=>a+s.km,0);const feel=['','Rough','Nervous','Okay','Good','Great'];
-  pane.innerHTML=`${stages.length>1?`<div class="chips">${['all',...stages].map(x=>`<button class="chip" data-lf="${esc(x)}" aria-pressed="${logFilter===x}">${x==='all'?'All':esc(x)}</button>`).join('')}</div>`:''}
+  pane.innerHTML=`${head}${stages.length>1?`<div class="chips">${['all',...stages].map(x=>`<button class="chip" data-lf="${esc(x)}" aria-pressed="${logFilter===x}">${x==='all'?'All':esc(x)}</button>`).join('')}</div>`:''}
    <div class="sum">${gauge(ss.length,'Lessons')}${gauge((mins/60).toFixed(1),'Hours')}${gauge(km.toFixed(0),'Km')}</div>
    ${ss.length?ss.map(s=>`<div class="entry"><div class="top"><span>${esc(s.routeName)}</span><span>${feel[s.feel]||''}</span></div>
      <div class="meta">${esc(stageOf(s))} · ${new Date(s.start).toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'})} · ${fmtDur(s.end-s.start)} · ${s.km} km · top ${s.maxKmh} km/h · ${s.done}/${s.total} pins${s.flags?.length?` · ${s.flags.length} marks`:''}</div>
@@ -727,6 +759,13 @@ pane.addEventListener('click',e=>{const t=e.target.closest('button');if(!t)retur
   if(t.id==='autoBuild')return autoBuild();
   if(t.id==='lotCancel')return cancelLotPick();
   if(d.lf){logFilter=d.lf;return render()}
+  if(t.id==='pfEdit'){editingProfile=true;return render()}
+  if(t.id==='pfDone'){editingProfile=false;return render()}
+  if(t.id==='pfNew'){S.pdata[S.profileId]={sessions:S.sessions,skills:S.skills};const np={id:'p'+uid(),name:'New learner',since:'',testDate:'',goalHours:''};
+    S.profiles.push(np);S.sessions=[];S.skills={};S.profileId=np.id;logFilter='all';histLayer.clearLayers();editingProfile=true;save();return render()}
+  if(t.id==='pfDel'){if(!t.dataset.sure){t.dataset.sure=1;t.textContent='Tap again: deletes their lessons too';return}
+    const gone=S.profileId;S.profiles=S.profiles.filter(x=>x.id!==gone);const nx=S.profiles[0].id;const d=S.pdata[nx]||{sessions:[],skills:{}};
+    S.sessions=d.sessions;S.skills=d.skills;delete S.pdata[nx];S.profileId=nx;editingProfile=false;save();toast('Profile deleted');return render()}
   if(d.delsess){if(!t.dataset.sure){t.dataset.sure=1;t.textContent='Tap again';return}toast('Lesson deleted');return dropSessions([d.delsess])}
   if(t.id==='clearLog'){if(!t.dataset.sure){t.dataset.sure=1;t.textContent='Tap again to delete them all';return}
     const ids=S.sessions.filter(s=>logFilter==='all'||stageOf(s)===logFilter).map(s=>s.id);logFilter='all';toast(`Deleted ${ids.length} lesson${ids.length>1?'s':''}`);return dropSessions(ids)}
@@ -760,23 +799,25 @@ pane.addEventListener('click',e=>{const t=e.target.closest('button');if(!t)retur
   if(d.sess){const s=S.sessions.find(s=>s.id===d.sess);histLayer.clearLayers();if(s.track?.length){const pl=L.polyline(s.track,{color:'#7A4FD6',weight:5,opacity:.85}).addTo(histLayer);
     (s.flags||[]).forEach(f=>L.marker(f.ll,{icon:L.divIcon({className:'',iconSize:[22,22],iconAnchor:[11,11],html:'<div class="flag">!</div>'})}).bindTooltip(esc(f.label)).addTo(histLayer));
     map.fitBounds(pl.getBounds(),{padding:[30,30]})}else toast('No GPS track saved for this lesson');return}
-  if(t.id==='exportBtn'){const b=new Blob([JSON.stringify(S,null,1)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='drive-coach-backup.json';a.click();return}
+  if(t.id==='exportBtn'){S.lastBackup=Date.now();save();setTimeout(render,500);const b=new Blob([JSON.stringify(S,null,1)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='drive-coach-backup.json';a.click();return}
   if(t.id==='importBtn')return document.getElementById('importFile').click();
 });
 pane.addEventListener('change',e=>{const t=e.target;const r=route();
   if(t.id==='areaSel')return goArea(t.value);
+  if(t.id==='pfSel')return switchProfile(t.value);
   if(t.id==='routeSel'){if(sess)return toast('End the lesson before switching routes'),render();S.activeRouteId=t.value;save();histLayer.clearLayers();drawRoute();fitRoute();return render()}
 });
 pane.addEventListener('input',e=>{const t=e.target;const r=route();
   if(t.id==='endNotes'){endForm.notes=t.value;return}
   if(t.id==='rName'){r.name=t.value;save();return}
+  const pf={pfName:'name',pfSince:'since',pfTest:'testDate',pfGoal:'goalHours'}[t.id];if(pf){prof()[pf]=t.value;save();return}
   if(t.id==='rStage'){r.stage=t.value;save();return}
   if(t.id==='rGoal'){r.goal=t.value;save();return}
   if(t.dataset.cp){const c=r.cps.find(c=>c.id===t.dataset.cp);c[t.dataset.f]=t.value;save();drawRoute()}
 });
 pane.addEventListener('keydown',e=>{if(e.target.id==='placeQ'&&e.key==='Enter'){e.preventDefault();placeSearch(e.target.value)}});
 document.getElementById('importFile').onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
-  rd.onload=()=>{try{const j=JSON.parse(rd.result);if(!Array.isArray(j.routes))throw 0;S=j;save();drawRoute();render();toast('Data imported')}catch(err){toast('That file is not a Drive Coach backup')}};rd.readAsText(f)};
+  rd.onload=()=>{try{const j=JSON.parse(rd.result);if(!Array.isArray(j.routes))throw 0;S=migrate(j);save();drawRoute();render();toast('Data imported')}catch(err){toast('That file is not a Drive Coach backup')}};rd.readAsText(f)};
 document.addEventListener('visibilitychange',async()=>{if(sess&&document.visibilityState==='visible'&&!wake){try{wake=await navigator.wakeLock?.request('screen')}catch(e){}}});
 window.addEventListener('beforeunload',e=>{if(sess){e.preventDefault();e.returnValue=''}});
 
