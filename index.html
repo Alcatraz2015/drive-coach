@@ -35,6 +35,9 @@ button{cursor:pointer}
 :focus-visible{outline:3px solid var(--caution);outline-offset:2px}
 .app{height:100%;display:grid;grid-template-rows:minmax(200px,1fr) auto}
 #map{position:relative;z-index:0;background:var(--surface2)}
+.darkmap .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.9) contrast(.9)}
+.pane>*{flex-shrink:0}
+select{min-height:44px}
 .leaflet-container{font-family:var(--body);background:var(--surface2)}
 
 /* floating map controls */
@@ -215,8 +218,10 @@ const map=L.map('map',{zoomControl:false,attributionControl:true}).setView(curAr
 const dark=matchMedia('(prefers-color-scheme: dark)');
 let tiles;
 function setTiles(){tiles&&map.removeLayer(tiles);
-  tiles=L.tileLayer(`https://{s}.basemaps.cartocdn.com/${dark.matches?'dark_all':'rastertiles/voyager'}/{z}/{x}/{y}{r}.png`,
-   {maxZoom:20,subdomains:'abcd',attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map)}
+  tiles=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+   {maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(map);
+  document.getElementById('map').classList.toggle('darkmap',isDark())}
+function isDark(){const t=document.documentElement.dataset.theme;return t?t==='dark':dark.matches}
 setTiles();dark.addEventListener?.('change',setTiles);
 const cpLayer=L.layerGroup().addTo(map), histLayer=L.layerGroup().addTo(map), flagLayer=L.layerGroup().addTo(map);
 const trackLine=L.polyline([],{color:'#2F7DE1',weight:5,opacity:.85}).addTo(map);
@@ -232,7 +237,7 @@ function drawRoute(){
      .bindTooltip(esc(c.name),{direction:'top',offset:[0,-14]}).addTo(cpLayer);
     m.on('dragend',e=>{const p=e.target.getLatLng();c.lat=p.lat;c.lng=p.lng;save();drawRoute()});
   });
-  if(pts.length>1)L.polyline(pts,{color:dark.matches?'#F2C53D':'#B88600',weight:3,dashArray:'6 8'}).addTo(cpLayer);
+  if(pts.length>1)L.polyline(pts,{color:isDark()?'#F2C53D':'#B88600',weight:3,dashArray:'6 8'}).addTo(cpLayer);
 }
 function fitRoute(){const pts=route().cps.filter(c=>c.lat!=null).map(c=>[c.lat,c.lng]);
   if(sess&&sess.track.length)pts.push(...sess.track);
@@ -368,7 +373,7 @@ async function buildReport(s,tilesOn=true){
     const toC=ll=>{const p=wpx(ll,z);return[mx+p[0]-ox,my+p[1]-oy]};
     if(tilesOn){const jobs=[];
       for(let tx=Math.floor(ox/256);tx<=Math.floor((ox+mw)/256);tx++)for(let ty=Math.floor(oy/256);ty<=Math.floor((oy+mh)/256);ty++){
-        jobs.push(loadImg(`https://a.basemaps.cartocdn.com/rastertiles/voyager/${z}/${tx}/${ty}@2x.png`).then(im=>c.drawImage(im,mx+tx*256-ox,my+ty*256-oy,256,256)).catch(()=>{}))}
+        jobs.push(loadImg(`https://tile.openstreetmap.org/${z}/${tx}/${ty}.png`).then(im=>c.drawImage(im,mx+tx*256-ox,my+ty*256-oy,256,256)).catch(()=>{}))}
       await Promise.all(jobs)}
     else{c.strokeStyle='#D9E1DB';c.lineWidth=1;for(let gx=mx;gx<mx+mw;gx+=60){c.beginPath();c.moveTo(gx,my);c.lineTo(gx,my+mh);c.stroke()}for(let gy=my;gy<my+mh;gy+=60){c.beginPath();c.moveTo(mx,gy);c.lineTo(mx+mw,gy);c.stroke()}}
     if(cps.length>1){c.setLineDash([10,10]);c.strokeStyle=RC.caution;c.lineWidth=4;c.beginPath();cps.forEach((p,i)=>{const q=toC(p.ll);i?c.lineTo(...q):c.moveTo(...q)});c.stroke();c.setLineDash([])}
@@ -378,7 +383,7 @@ async function buildReport(s,tilesOn=true){
     cps.forEach(p=>pinDot(c,...toC(p.ll),p.n,p.done?RC.ok:RC.caution,p.done?'#fff':'#1D1600'));
     flags.forEach(f=>{const [x,y2]=toC(f.ll),g=FLAGS[f.label]?.good;c.fillStyle=g?RC.ok:RC.stop;rrect(c,x-15,y2-15,30,30,6);c.fill();c.lineWidth=3;c.strokeStyle='#fff';c.stroke();
       c.fillStyle='#fff';c.font=fnt(800,15,'m');c.textAlign='center';c.textBaseline='middle';c.fillText(g?'★':f.i,x,y2+1);c.textAlign='left';c.textBaseline='alphabetic'});
-    if(tilesOn){c.fillStyle='rgba(255,255,255,.8)';c.fillRect(mx+mw-250,my+mh-26,250,26);c.fillStyle=RC.muted;c.font=fnt(400,13,'b');c.fillText('© OpenStreetMap contributors © CARTO',mx+mw-240,my+mh-9)}
+    if(tilesOn){c.fillStyle='rgba(255,255,255,.8)';c.fillRect(mx+mw-200,my+mh-26,200,26);c.fillStyle=RC.muted;c.font=fnt(400,13,'b');c.fillText('© OpenStreetMap contributors',mx+mw-190,my+mh-9)}
   }else{c.fillStyle=RC.muted;c.font=fnt(400,24,'b');c.textAlign='center';c.fillText('No GPS track was recorded for this lesson',W/2,my+mh/2);c.textAlign='left'}
   c.restore();c.strokeStyle=RC.line;c.lineWidth=2;rrect(c,mx,my,mw,mh,16);c.stroke();
   y=my+mh+30;
