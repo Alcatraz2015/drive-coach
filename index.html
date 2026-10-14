@@ -489,25 +489,30 @@ function polyArea(g){if(g.length<3)return 0;const la=g[0][0],k=Math.cos(la*Math.
 function cluster(list,m){const out=[];list.forEach(f=>{if(!out.some(o=>hav(o.ll,f.ll)<m))out.push(f)});return out}
 const OVERPASS=['https://overpass-api.de/api/interpreter','https://overpass.private.coffee/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
 let lastOsmErr='';
-async function overpass(q){const errs=[];
-  for(const ep of OVERPASS){const ctl=new AbortController();const tm=setTimeout(()=>ctl.abort(),25000);
-    try{const res=await fetch(ep,{method:'POST',body:'data='+encodeURIComponent(q),headers:{'Content-Type':'application/x-www-form-urlencoded'},signal:ctl.signal});
-      if(!res.ok){errs.push(new URL(ep).host+' '+res.status);continue}
-      const j=await res.json();if(j.remark&&/runtime error|timed out/i.test(j.remark)&&!(j.elements||[]).length){errs.push(new URL(ep).host+' busy');continue}
-      return j.elements||[]}
-    catch(e){errs.push(new URL(ep).host+' '+(e.name==='AbortError'?'timeout':'blocked'))}
-    finally{clearTimeout(tm)}}
-  lastOsmErr=errs.join(', ');throw new Error(lastOsmErr)}
+async function overpass(q){const errs=[],ctls=OVERPASS.map(()=>new AbortController());const tm=setTimeout(()=>ctls.forEach(c=>c.abort()),35000);
+  const one=async(ep,i)=>{const host=new URL(ep).host;
+    try{const res=await fetch(ep,{method:'POST',body:'data='+encodeURIComponent(q),headers:{'Content-Type':'application/x-www-form-urlencoded'},signal:ctls[i].signal});
+      if(!res.ok)throw new Error(host+' '+res.status);const j=await res.json();
+      if(j.remark&&/runtime error|timed out|out of memory/i.test(j.remark)&&!(j.elements||[]).length)throw new Error(host+' busy');
+      ctls.forEach((c,k)=>k!==i&&c.abort());return j.elements||[]}
+    catch(e){const m=e.name==='AbortError'?host+' timeout':(e.message.startsWith(host)?e.message:host+' blocked');errs.push(m);throw new Error(m)}};
+  try{return await Promise.any(OVERPASS.map(one))}
+  catch(e){lastOsmErr=errs.join(', ');throw new Error(lastOsmErr)}finally{clearTimeout(tm)}}
+const OSM_CACHE='driveCoach.osm';
+function cacheGet(k){try{const c=JSON.parse(localStorage.getItem(OSM_CACHE)||'{}')[k];if(c&&Date.now()-c.t<7*864e5)return c.els}catch(e){}return null}
+function cachePut(k,els){try{const all=JSON.parse(localStorage.getItem(OSM_CACHE)||'{}');all[k]={t:Date.now(),els};
+  const keys=Object.keys(all).sort((a,b)=>all[b].t-all[a].t);keys.slice(8).forEach(x=>delete all[x]);localStorage.setItem(OSM_CACHE,JSON.stringify(all))}catch(e){}}
 
 async function fetchFeatures(kinds,s){
   const A=(r)=>`(around:${r},${s[0].toFixed(5)},${s[1].toFixed(5)})`,parts=[];
-  if(kinds.includes('lot'))parts.push(`way["amenity"="parking"]["parking"!~"underground|multi-storey|rooftop"]["access"!~"private|no"]${A(3000)};`);
+  if(kinds.includes('lot'))parts.push(`way["amenity"="parking"]${A(2500)};`);
   if(kinds.includes('stop'))parts.push(`node["highway"="stop"]${A(2500)};`);
   if(kinds.includes('signals'))parts.push(`node["highway"="traffic_signals"]${A(3500)};`);
   if(kinds.includes('round'))parts.push(`way["junction"~"^(roundabout|circular)$"]${A(5000)};`);
   if(kinds.includes('play'))parts.push(`node["leisure"="playground"]${A(2500)};way["leisure"="playground"]${A(2500)};`);
   if(kinds.includes('ramp'))parts.push(`way["highway"~"^(motorway|trunk|motorway_link|trunk_link)$"]${A(5000)};`);
-  const els=await overpass(`[out:json][timeout:20];(${parts.join('')});out geom;`);
+  const key=kinds.join('+')+'@'+s[0].toFixed(3)+','+s[1].toFixed(3);let els=cacheGet(key);
+  if(!els){els=await overpass(`[out:json][timeout:30];(${parts.join('')});out geom;`);cachePut(key,els)}
   const F={lot:[],stop:[],allway:[],signals:[],round:[],play:[],main:[],link:[]};
   for(const e of els){const t=e.tags||{};const g=e.type==='node'?[[e.lat,e.lon]]:(e.geometry||[]).map(p=>[p.lat,p.lon]);if(!g.length)continue;
     const ll=[g.reduce((a,p)=>a+p[0],0)/g.length,g.reduce((a,p)=>a+p[1],0)/g.length];const f={ll,g,name:t.name};
