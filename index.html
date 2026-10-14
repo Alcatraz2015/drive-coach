@@ -453,19 +453,27 @@ function bearing(a,b){const t=Math.PI/180,y=Math.sin((b[1]-a[1])*t)*Math.cos(b[0
 function polyArea(g){if(g.length<3)return 0;const la=g[0][0],k=Math.cos(la*Math.PI/180);let a=0;
   for(let i=0;i<g.length;i++){const p=g[i],q=g[(i+1)%g.length];a+=((p[1]-g[0][1])*111320*k)*((q[0]-la)*110540)-((q[1]-g[0][1])*111320*k)*((p[0]-la)*110540)}return Math.abs(a/2)}
 function cluster(list,m){const out=[];list.forEach(f=>{if(!out.some(o=>hav(o.ll,f.ll)<m))out.push(f)});return out}
-async function overpass(q){const ctl=new AbortController();const tm=setTimeout(()=>ctl.abort(),30000);
-  try{const res=await fetch('https://overpass-api.de/api/interpreter',{method:'POST',body:'data='+encodeURIComponent(q),headers:{'Content-Type':'application/x-www-form-urlencoded'},signal:ctl.signal});
-    if(!res.ok)throw new Error('http '+res.status);return (await res.json()).elements||[]}finally{clearTimeout(tm)}}
+const OVERPASS=['https://overpass-api.de/api/interpreter','https://overpass.private.coffee/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
+let lastOsmErr='';
+async function overpass(q){const errs=[];
+  for(const ep of OVERPASS){const ctl=new AbortController();const tm=setTimeout(()=>ctl.abort(),25000);
+    try{const res=await fetch(ep,{method:'POST',body:'data='+encodeURIComponent(q),headers:{'Content-Type':'application/x-www-form-urlencoded'},signal:ctl.signal});
+      if(!res.ok){errs.push(new URL(ep).host+' '+res.status);continue}
+      const j=await res.json();if(j.remark&&/runtime error|timed out/i.test(j.remark)&&!(j.elements||[]).length){errs.push(new URL(ep).host+' busy');continue}
+      return j.elements||[]}
+    catch(e){errs.push(new URL(ep).host+' '+(e.name==='AbortError'?'timeout':'blocked'))}
+    finally{clearTimeout(tm)}}
+  lastOsmErr=errs.join(', ');throw new Error(lastOsmErr)}
 
 async function fetchFeatures(kinds,s){
   const A=(r)=>`(around:${r},${s[0].toFixed(5)},${s[1].toFixed(5)})`,parts=[];
-  if(kinds.includes('lot'))parts.push(`way["amenity"="parking"]["parking"!~"underground|multi-storey|rooftop"]["access"!~"private|no"]${A(4000)};`);
+  if(kinds.includes('lot'))parts.push(`way["amenity"="parking"]["parking"!~"underground|multi-storey|rooftop"]["access"!~"private|no"]${A(3000)};`);
   if(kinds.includes('stop'))parts.push(`node["highway"="stop"]${A(2500)};`);
   if(kinds.includes('signals'))parts.push(`node["highway"="traffic_signals"]${A(3500)};`);
   if(kinds.includes('round'))parts.push(`way["junction"~"^(roundabout|circular)$"]${A(5000)};`);
   if(kinds.includes('play'))parts.push(`node["leisure"="playground"]${A(2500)};way["leisure"="playground"]${A(2500)};`);
-  if(kinds.includes('ramp'))parts.push(`way["highway"~"^(motorway|trunk|motorway_link|trunk_link)$"]${A(7000)};`);
-  const els=await overpass(`[out:json][timeout:25];(${parts.join('')});out geom;`);
+  if(kinds.includes('ramp'))parts.push(`way["highway"~"^(motorway|trunk|motorway_link|trunk_link)$"]${A(5000)};`);
+  const els=await overpass(`[out:json][timeout:20];(${parts.join('')});out geom;`);
   const F={lot:[],stop:[],allway:[],signals:[],round:[],play:[],main:[],link:[]};
   for(const e of els){const t=e.tags||{};const g=e.type==='node'?[[e.lat,e.lon]]:(e.geometry||[]).map(p=>[p.lat,p.lon]);if(!g.length)continue;
     const ll=[g.reduce((a,p)=>a+p[0],0)/g.length,g.reduce((a,p)=>a+p[1],0)/g.length];const f={ll,g,name:t.name};
@@ -527,7 +535,7 @@ async function autoBuild(){const r=route(),n=stageNum(r);
     if(!found){toast('Nothing suitable found here. Move the map or tap Near me, then try again.');return}
     r.cps=cps;r.area=r.area||S.areaId;save();drawRoute();fitRoute();
     toast(found===cps.length?`Placed ${found} pins. Check them and drag any that look off.`:`Placed ${found} of ${cps.length}. Tap the map or search for the rest.`)}
-  catch(e){toast('Could not reach OpenStreetMap. Check the connection and try again.')}
+  catch(e){toast(lastOsmErr?`OpenStreetMap didn't answer (${lastOsmErr}). Try again in a minute.`:'Something went wrong reading the map data: '+e.message)}
   finally{busy=false;render()}}
 
 async function placeSearch(q){q=q.trim();if(!q)return;const b=map.getBounds().pad(1.5);
