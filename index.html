@@ -344,7 +344,7 @@ function flagMoment(label){if(!sess||!lastFix)return toast('Waiting for GPS…')
 function finishSession(keep){
   if(keep){const r=route();
     let tr=sess.track;if(tr.length>1500){const k=Math.ceil(tr.length/1500);tr=tr.filter((_,i)=>i%k===0)}
-    S.sessions.unshift({id:sess.id,start:sess.start,end:Date.now(),routeId:r.id,routeName:r.name,km:+sess.km.toFixed(2),maxKmh:Math.round(sess.maxKmh),
+    S.sessions.unshift({id:sess.id,start:sess.start,end:Date.now(),routeId:r.id,routeName:r.name,stage:r.stage,km:+sess.km.toFixed(2),maxKmh:Math.round(sess.maxKmh),
       done:sess.done.length,total:r.cps.filter(c=>c.lat!=null).length,feel:endForm.feel,notes:endForm.notes.trim(),
       track:tr.map(p=>[+p[0].toFixed(5),+p[1].toFixed(5)]),flags:sess.flags.map(f=>({ll:[+f.ll[0].toFixed(5),+f.ll[1].toFixed(5)],label:f.label,t:f.t})),
       cps:r.cps.map((c,i)=>({n:i+1,name:c.name,task:c.task,done:sess.done.includes(c.id),ll:c.lat!=null?[+c.lat.toFixed(5),+c.lng.toFixed(5)]:null})).filter(c=>c.ll)});
@@ -698,16 +698,23 @@ function renderSkills(){const all=SKILLS.flatMap(g=>g[1]);const tot=all.reduce((
   pane.innerHTML=`<div class="stack"><div class="row" style="justify-content:space-between"><h2>Skill board</h2><span class="muted small">${Math.round(tot/max*100)}% to road-test ready</span></div><div class="small muted">Tap a skill for what to check and how to teach it.</div>
    <div class="progressbar"><i style="width:${tot/max*100}%"></i></div></div>
    ${SKILLS.map(([g,items])=>`<div class="skillgroup"><h3>${g}</h3>${items.map(([k,n])=>{const v=S.skills[k]||0;
-     const co=COACH[k];return `<div class="skill"><details class="coach"><summary>${n}</summary>${co?`<div class="coachbody"><div class="ck">Check</div><ul>${co.check.map(x=>`<li>${esc(x)}</li>`).join('')}</ul><div class="ck">Teach</div><p>${esc(co.teach)}</p></div>`:''}</details><div><div class="lvl" role="group" aria-label="${esc(n)}">${[1,2,3].map(l=>`<button data-sk="${k}" data-l="${l}" class="${v>=l?'on':''}" aria-label="${LEVELS[l]}"></button>`).join('')}</div><div class="lvlname">${LEVELS[v]}</div></div></div>`}).join('')}</div>`).join('')}`}
+     const co=COACH[k];return `<div class="skill"><details class="coach"><summary>${n}</summary>${co?`<div class="coachbody"><div class="ck">Check</div><ul>${co.check.map(x=>`<li>${esc(x)}</li>`).join('')}</ul><div class="ck">Teach</div><p>${esc(co.teach)}</p></div>`:''}</details><div><div class="lvl" role="group" aria-label="${esc(n)}">${[1,2,3].map(l=>`<button data-sk="${k}" data-l="${l}" class="${v>=l?'on':''}" aria-label="${LEVELS[l]}"></button>`).join('')}</div><div class="lvlname">${LEVELS[v]}</div></div></div>`}).join('')}</div>`).join('')}
+   <button class="btn danger" id="resetSkills">Reset skill board</button>`}
 
-function renderLog(){const ss=S.sessions;const mins=ss.reduce((a,s)=>a+(s.end-s.start)/60000,0),km=ss.reduce((a,s)=>a+s.km,0);
-  const feel=['','Rough','Nervous','Okay','Good','Great'];
-  pane.innerHTML=`<div class="sum">${gauge(ss.length,'Lessons')}${gauge((mins/60).toFixed(1),'Hours')}${gauge(km.toFixed(0),'Km')}</div>
+let logFilter='all';
+const stageOf=s=>s.stage||(S.routes.find(r=>r.id===s.routeId)||{}).stage||'Custom';
+function renderLog(){const stages=[...new Set(S.sessions.map(stageOf))].sort();if(logFilter!=='all'&&!stages.includes(logFilter))logFilter='all';
+  const ss=S.sessions.filter(s=>logFilter==='all'||stageOf(s)===logFilter);
+  const mins=ss.reduce((a,s)=>a+(s.end-s.start)/60000,0),km=ss.reduce((a,s)=>a+s.km,0);const feel=['','Rough','Nervous','Okay','Good','Great'];
+  pane.innerHTML=`${stages.length>1?`<div class="chips">${['all',...stages].map(x=>`<button class="chip" data-lf="${esc(x)}" aria-pressed="${logFilter===x}">${x==='all'?'All':esc(x)}</button>`).join('')}</div>`:''}
+   <div class="sum">${gauge(ss.length,'Lessons')}${gauge((mins/60).toFixed(1),'Hours')}${gauge(km.toFixed(0),'Km')}</div>
    ${ss.length?ss.map(s=>`<div class="entry"><div class="top"><span>${esc(s.routeName)}</span><span>${feel[s.feel]||''}</span></div>
-     <div class="meta">${new Date(s.start).toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'})} · ${fmtDur(s.end-s.start)} · ${s.km} km · top ${s.maxKmh} km/h · ${s.done}/${s.total} pins${s.flags?.length?` · ${s.flags.length} marks`:''}</div>
-     ${s.notes?`<div class="note">${esc(s.notes)}</div>`:''}<div class="row" style="margin-top:10px"><button class="btn small" data-sess="${s.id}">Show on map</button><button class="btn small primary" data-rep="${s.id}">Report</button></div></div>`).join('')
-    :`<div class="empty">No lessons yet. Finished lessons land here with time, distance, the track you drove and your notes. Tap one to see its track on the map.</div>`}
-`}
+     <div class="meta">${esc(stageOf(s))} · ${new Date(s.start).toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'})} · ${fmtDur(s.end-s.start)} · ${s.km} km · top ${s.maxKmh} km/h · ${s.done}/${s.total} pins${s.flags?.length?` · ${s.flags.length} marks`:''}</div>
+     ${s.notes?`<div class="note">${esc(s.notes)}</div>`:''}<div class="row" style="margin-top:10px"><button class="btn small" data-sess="${s.id}">Show on map</button><button class="btn small primary" data-rep="${s.id}">Report</button><button class="btn small danger" data-delsess="${s.id}" style="margin-left:auto">Delete</button></div></div>`).join('')
+    :`<div class="empty">No lessons yet. Finished lessons land here with time, distance, the track you drove and your notes.</div>`}
+   ${ss.length?`<button class="btn danger" id="clearLog">Delete all ${ss.length} lesson${ss.length>1?'s':''}${logFilter==='all'?'':' in '+esc(logFilter)}</button>`:''}
+   <div class="small muted">Just testing the app? Use "Discard this lesson" at the end of a drive so it never lands here.</div>`}
+function dropSessions(ids){S.sessions=S.sessions.filter(s=>!ids.includes(s.id));ids.forEach(id=>delete reportCache[id]);histLayer.clearLayers();save();render()}
 
 function render(){if(reportView)return renderReport();if(lotPick)return renderLotPick();({drive:renderDrive,routes:renderRoutes,skills:renderSkills,log:renderLog})[tab]()}
 
@@ -719,6 +726,11 @@ pane.addEventListener('click',e=>{const t=e.target.closest('button');if(!t)retur
   if(t.id==='nearMe')return nearMe();
   if(t.id==='autoBuild')return autoBuild();
   if(t.id==='lotCancel')return cancelLotPick();
+  if(d.lf){logFilter=d.lf;return render()}
+  if(d.delsess){if(!t.dataset.sure){t.dataset.sure=1;t.textContent='Tap again';return}toast('Lesson deleted');return dropSessions([d.delsess])}
+  if(t.id==='clearLog'){if(!t.dataset.sure){t.dataset.sure=1;t.textContent='Tap again to delete them all';return}
+    const ids=S.sessions.filter(s=>logFilter==='all'||stageOf(s)===logFilter).map(s=>s.id);logFilter='all';toast(`Deleted ${ids.length} lesson${ids.length>1?'s':''}`);return dropSessions(ids)}
+  if(t.id==='resetSkills'){if(!t.dataset.sure){t.dataset.sure=1;t.textContent='Tap again to reset all skills';return}S.skills={};save();toast('Skill board reset');return render()}
   if(d.lot!=null)return chooseLot(+d.lot);
   if(t.id==='placeGo')return placeSearch(document.getElementById('placeQ').value);
   if(d.place!=null)return pinPlace(+d.place);
