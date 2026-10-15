@@ -131,8 +131,8 @@ function walkRamp(F,s){
 function buildStage(n,F,s,lot,mkId=uid){
   const tpl=D.TEMPLATES[n-1],used=[];
   const take=(list,from,min=150)=>{const f=list.filter(x=>!used.includes(x)&&used.every(u=>hav(u.ll,x.ll)>=min)&&hav(s,x.ll)>=80).sort((a,b)=>hav(from,a.ll)-hav(from,b.ll))[0];if(f)used.push(f);return f};
-  const mk=(name,task,ll,place)=>({id:mkId(),name,task:place?`${task} (${place})`:task,lat:ll?+ll[0].toFixed(6):null,lng:ll?+ll[1].toFixed(6):null});
-  if(n===1){const pins=lot?lotPins(lot,s):[];return tpl.cps.map(([nm,tk],i)=>mk(nm,tk,pins[i],i===0&&lot&&lot.name))}
+  const mk=(name,task,ll,place,onLot)=>({id:mkId(),name,task:place?`${task} (${place})`:task,lat:ll?+ll[0].toFixed(6):null,lng:ll?+ll[1].toFixed(6):null,...(onLot?{onLot:true}:{})});
+  if(n===1){const pins=lot?lotPins(lot,s):[];return tpl.cps.map(([nm,tk],i)=>mk(nm,tk,pins[i],i===0&&lot&&lot.name,true))}
   if(n===2){let cur=s;const slots=['stop','stop','stop','play','allway','start'];
     return tpl.cps.map(([nm,tk],i)=>{const k=slots[i];if(k==='start')return mk(nm,tk,s);
       const f=k==='allway'?take(F.allway.length?F.allway:F.stop,cur):k==='play'?take(F.play,cur,100):take(F.stop,cur);
@@ -143,13 +143,19 @@ function buildStage(n,F,s,lot,mkId=uid){
   if(n===5){const w=walkRamp(F,s);const pts=w?[w.onRamp,w.merge,w.cruise,w.exit]:[];return tpl.cps.map(([nm,tk],i)=>mk(nm,tk,pts[i]))}
   if(n===6){let cur=s;if(lot){used.push(lot);cur=lot.ll}
     const st=take(F.stop,cur);if(st)cur=st.ll;const sg=take(F.signals,cur,300);if(sg)cur=sg.ll;const rd=take(F.round,cur,250);
-    return [mk('Pre-trip check','Explain the controls out loud before moving.',s),mk('Parking','Stall park forward and reverse, then a three-point turn.',lot&&lot.ll,lot&&lot.name),
+    return [mk('Pre-trip check','Explain the controls out loud before moving.',s),mk('Parking','Stall park forward and reverse, then a three-point turn.',lot&&lot.ll,lot&&lot.name,true),
       mk('Stop sign','Full stop behind the line, look left, right, left.',st&&st.ll),mk('Traffic signals','Approach a stale green ready to stop. Smooth left on green.',sg&&sg.ll),
       mk('Roundabout','Pick the lane early, yield, signal out.',rd&&rd.ll,rd&&rd.name),mk('Back to start','Park at the curb, wheels within 30 cm.',s)]}
   return []}
 
+/* Direction arrows along a path: one every `step` metres, each with the heading of travel. */
+function pathArrows(g,step){const out=[];if(!g||g.length<2)return out;let carry=step/2;
+  for(let i=0;i<g.length-1;i++){const a=g[i],b=g[i+1],d=hav(a,b);if(d<=0)continue;let t=carry;
+    while(t<=d){const f=t/d;out.push({ll:[a[0]+(b[0]-a[0])*f,a[1]+(b[1]-a[1])*f],deg:bearing(a,b)});t+=step}carry=t-d}
+  return out}
+
 const API={uid,esc,hav,bearing,angDiff,fmtDur,fmtDist,stageNum,median,GPS,acceptFix,smoothSpeed,thinTrack,placedCps,arrivals,nextTarget,skippedCps,
   skillPct,hours,badFlags,mistakeSeries,topMistakes,suggestNext,curfew,testEligibleFrom,parseMaxspeed,inBox,segDist,limitAt,
-  polyArea,cluster,carLot,parseFeatures,rankLots,lotPins,walkRamp,buildStage};
+  pathArrows,polyArea,cluster,carLot,parseFeatures,rankLots,lotPins,walkRamp,buildStage};
 if(typeof module!=='undefined')module.exports=API;else Object.assign(root,API);
 })(typeof window!=='undefined'?window:globalThis);

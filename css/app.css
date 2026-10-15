@@ -188,3 +188,8 @@ details.settings summary{cursor:pointer;font:800 13px/1.2 var(--display);text-tr
 /* onboarding */
 .hero{display:grid;gap:6px}
 .hero h2{font-size:28px}
+
+/* direction arrows on the route */
+.arrow{width:22px;height:22px;filter:drop-shadow(0 1px 1.5px rgb(0 0 0/.5))}
+.arrow svg{width:22px;height:22px;display:block}
+.arrow path{fill:#F2C53D;stroke:#1D1600;stroke-width:1.5;stroke-linejoin:round}

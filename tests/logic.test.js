@@ -80,3 +80,13 @@ test('auto-build places a full stage 2 route from features',()=>{
   const cps=L.buildStage(2,L.parseFeatures(els),s,null);
   assert.equal(cps.length,6);assert.ok(cps.every(c=>c.lat!=null));
 });
+
+test('direction arrows follow the path heading',()=>{
+  const g=[[51,-114],[51.01,-114],[51.01,-113.98]];                    // north 1.1 km, then east 1.4 km
+  const a=L.pathArrows(g,500);
+  assert.ok(a.length>=4);assert.ok(Math.abs(a[0].deg-0)<1);assert.ok(Math.abs(a[a.length-1].deg-90)<2);
+});
+test('lot pins are marked so they are not moved onto roads',()=>{
+  const lot={ll:[51,-114],g:[[51,-114],[51.001,-114],[51.001,-113.998],[51,-113.998]],area:20000};
+  assert.ok(L.buildStage(1,{lot:[]},[51.01,-114],lot).every(c=>c.onLot));
+});

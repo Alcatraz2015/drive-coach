@@ -68,10 +68,16 @@ const OSM=(()=>{
       return {g:r.geometry.coordinates.map(c=>[+c[1].toFixed(5),+c[0].toFixed(5)]),km:+(r.distance/1000).toFixed(1),min:Math.round(r.duration/60)}}
     finally{clearTimeout(tm)}}
 
+  /* Move points onto the nearest drivable road. Returns [[lat,lng]|null...]; null = leave that point where it is (no road within maxM). */
+  async function snap(pts,maxM=250){const tm=ms=>{const c=new AbortController();setTimeout(()=>c.abort(),ms);return c.signal};
+    const one=async p=>{try{const r=await fetch(`https://router.project-osrm.org/nearest/v1/driving/${p[1].toFixed(6)},${p[0].toFixed(6)}?number=1`,{signal:tm(10000)});
+      const j=await r.json();const w=j.waypoints&&j.waypoints[0];return w&&w.distance<=maxM?[+w.location[1].toFixed(6),+w.location[0].toFixed(6)]:null}catch(e){return null}};
+    return Promise.all(pts.map(one))}
+
   async function search(q,bounds){const b=bounds;
     const url=`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&countrycodes=ca&q=${encodeURIComponent(q)}&viewbox=${b.getWest()},${b.getNorth()},${b.getEast()},${b.getSouth()}`;
     const res=await fetch(url,{headers:{'Accept-Language':'en'}});if(!res.ok)throw new Error('search '+res.status);
     return (await res.json()).map(x=>({name:x.name||x.display_name.split(',')[0],addr:x.display_name.split(',').slice(1,3).join(',').trim(),ll:[+x.lat,+x.lon]}))}
 
-  return {overpass,features,roads,search,drivePath,dataInfo,get lastErr(){return lastErr},get lastSource(){return lastSource}};
+  return {overpass,features,roads,search,drivePath,snap,dataInfo,get lastErr(){return lastErr},get lastSource(){return lastSource}};
 })();

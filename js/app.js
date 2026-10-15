@@ -40,12 +40,13 @@ function initMap(){
   cpLayer=L.layerGroup().addTo(map);histLayer=L.layerGroup().addTo(map);flagLayer=L.layerGroup().addTo(map);lotLayer=L.layerGroup().addTo(map);
   trackLine=L.polyline([],{color:'#2F7DE1',weight:5,opacity:.85}).addTo(map);
   map.on('click',onMapClick);
+  map.on('zoomend',()=>arrowPath&&drawArrows(arrowPath));
   map.on('dragstart',()=>{if(follow){follow=false;document.getElementById('locBtn').setAttribute('aria-pressed','false')}});
 }
 const carIcon=h=>L.divIcon({className:'',iconSize:[40,40],iconAnchor:[20,20],html:`<div class="car" style="transform:rotate(${h||0}deg)"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="13" fill="#2F7DE1" stroke="#fff" stroke-width="3"/><path d="M20 10l6 14-6-3.5-6 3.5z" fill="#fff"/></svg></div>`});
 const flagIcon=good=>L.divIcon({className:'',iconSize:[22,22],iconAnchor:[11,11],html:`<div class="flag" style="${good?'background:var(--ok)':''}">${good?'★':'!'}</div>`});
 function drawRoute(){
-  cpLayer.clearLayers();const r=route(),pts=[],nx=sess?nextTarget(r.cps,sess.done):null,skipped=sess?skippedCps(r.cps,sess.done).map(c=>c.id):[];
+  cpLayer.clearLayers();arrowLayer&&arrowLayer.clearLayers();arrowPath=null;const r=route(),pts=[],nx=sess?nextTarget(r.cps,sess.done):null,skipped=sess?skippedCps(r.cps,sess.done).map(c=>c.id):[];
   r.cps.forEach((c,i)=>{if(c.lat==null)return;pts.push([c.lat,c.lng]);
     const done=sess&&sess.done.includes(c.id);
     const m=L.marker([c.lat,c.lng],{draggable:!sess,icon:L.divIcon({className:'',iconSize:[30,30],iconAnchor:[15,15],
@@ -54,9 +55,16 @@ function drawRoute(){
     m.on('dragend',e=>{const p=e.target.getLatLng();c.lat=+p.lat.toFixed(6);c.lng=+p.lng.toFixed(6);save();drawRoute()});
   });
   if(pts.length>1){const col=isDark()?'#F2C53D':'#B88600',k=pathKey(pts);
-    if(r.path&&r.path.key===k){L.polyline(r.path.g,{color:'#fff',weight:7,opacity:.7}).addTo(cpLayer);L.polyline(r.path.g,{color:col,weight:4,dashArray:'8 7'}).addTo(cpLayer)}
+    if(r.path&&r.path.key===k){L.polyline(r.path.g,{color:'#fff',weight:7,opacity:.7}).addTo(cpLayer);L.polyline(r.path.g,{color:col,weight:4,dashArray:'8 7'}).addTo(cpLayer);drawArrows(r.path.g)}
     else{L.polyline(pts,{color:col,weight:3,dashArray:'2 8',opacity:.8}).addTo(cpLayer);queuePath(r,pts,k)}}
 }
+/* Direction arrows along the road path; spacing follows the zoom so they stay readable. */
+let arrowLayer=null,arrowPath=null;
+const arrowIcon=deg=>L.divIcon({className:'',iconSize:[22,22],iconAnchor:[11,11],html:`<div class="arrow" style="transform:rotate(${Math.round(deg)}deg)"><svg viewBox="0 0 22 22"><path d="M11 3l7 11h-4.5v5h-5v-5H4z"/></svg></div>`});
+function drawArrows(g){arrowPath=g;if(!arrowLayer)arrowLayer=L.layerGroup().addTo(map);arrowLayer.clearLayers();if(!g)return;
+  const step=Math.max(60,Math.min(3000,140*2**(16-map.getZoom())));
+  const pins=placedCps(route().cps).map(c=>[c.lat,c.lng]),clear=Math.max(25,step*0.25);
+  pathArrows(g,step).filter(a=>pins.every(p=>hav(p,a.ll)>clear)).slice(0,300).forEach(a=>L.marker(a.ll,{icon:arrowIcon(a.deg),interactive:false,keyboard:false}).addTo(arrowLayer))}
 /* Road-following path between pins. Fetched once per pin layout and saved with the route, so it also works offline. */
 const pathKey=pts=>pts.map(p=>p[0].toFixed(5)+','+p[1].toFixed(5)).join('|');
 const pathFail=new Map();let pathTimer=null;
@@ -229,7 +237,10 @@ async function autoBuild(){const r=route(),n=stageNum(r);
     applyBuild(r,buildStage(n,F,s,null))}
   catch(e){toast(OSM.lastErr?`This spot is outside the saved Calgary-area map data, and the live OpenStreetMap servers didn't answer (${OSM.lastErr}). Try again later, or use search or tap the map.`:'Something went wrong reading the map data: '+e.message,{ms:8000})}
   finally{busy=false;render()}}
-function applyBuild(r,cps){const found=cps.filter(c=>c.lat!=null).length;
+async function snapToRoads(cps){const todo=cps.filter(c=>c.lat!=null&&!c.onLot);if(!todo.length)return 0;
+  const res=await OSM.snap(todo.map(c=>[c.lat,c.lng]));let n=0;res.forEach((p,i)=>{if(p){todo[i].lat=p[0];todo[i].lng=p[1];n++}});return n}
+async function applyBuild(r,cps){const found=cps.filter(c=>c.lat!=null).length;
+  if(found){toast('Moving pins onto the nearest roads…');await snapToRoads(cps)}
   if(!found)return toast('Nothing suitable found here. Move the map or tap Near me, then try again.');
   const before=JSON.parse(JSON.stringify(r.cps));r.cps=cps;r.area=r.area||S.areaId;save();drawRoute();fitRoute();
   toast(found===cps.length?`Placed ${found} pins. Check them and drag any that look off.`:`Placed ${found} of ${cps.length}. Tap the map or search for the rest.`,
