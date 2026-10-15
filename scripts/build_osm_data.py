@@ -1,37 +1,21 @@
-"""Download OpenStreetMap road features for the Calgary region and save them as small tiles the app loads from its own site.
-Run by .github/workflows/osm-data.yml (weekly and on demand). Standard library only.
+"""Build the Calgary-region road data the app loads from its own site.
+Reads an OpenStreetMap extract (.osm.pbf or .osm) with pyosmium, so it doesn't depend on the shared Overpass servers.
+Run by .github/workflows/osm-data.yml, which downloads Alberta from Geofabrik and cuts it to BBOX first.
+Usage: python scripts/build_osm_data.py region.osm.pbf [out_dir]
 Output: data/osm/index.json, data/osm/f/<tile>.json (auto-build features), data/osm/r/<tile>.json (roads with speed limits)."""
-import json, math, os, sys, time, urllib.request, urllib.parse
+import json, math, os, sys, time
 
 BBOX = (50.70, -114.50, 51.36, -113.70)   # S, W, N, E: Calgary, Airdrie, Cochrane, Okotoks, Chestermere
 TILE = 0.05
-CHUNKS = (4, 4)
-SERVERS = ["https://overpass-api.de/api/interpreter", "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
-           "https://overpass.private.coffee/api/interpreter", "https://overpass.kumi.systems/api/interpreter"]
 OUT = os.path.join(os.path.dirname(__file__), "..", "data", "osm")
 LOT_TAGS = ("amenity", "name", "access", "parking", "hgv", "motorhome", "caravan", "bus", "coach", "parking:hgv",
             "motorcar", "motor_vehicle", "description", "operator", "note")
-ROAD_RE = "^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link)$"
-
-def overpass(q, fetch=None):
-    if fetch: return fetch(q)
-    last = None
-    for attempt in range(3):
-        for ep in SERVERS:
-            try:
-                req = urllib.request.Request(ep, data=urllib.parse.urlencode({"data": q}).encode(), headers={"User-Agent": "drive-coach-data-build (github.com/Alcatraz2015/drive-coach)"})
-                with urllib.request.urlopen(req, timeout=300) as r:
-                    j = json.load(r)
-                if j.get("remark") and "error" in j["remark"].lower() and not j.get("elements"):
-                    raise RuntimeError(j["remark"])
-                print(f"  ok from {ep}: {len(j.get('elements', []))} elements", flush=True)
-                return j.get("elements", [])
-            except Exception as e:
-                last = e; print(f"  {ep} failed: {e}", flush=True); time.sleep(10)
-        time.sleep(60)
-    raise RuntimeError(f"all Overpass servers failed: {last}")
+ROADS = {"motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential", "living_street",
+         "motorway_link", "trunk_link", "primary_link", "secondary_link", "tertiary_link"}
+FAST = {"motorway", "trunk", "motorway_link", "trunk_link"}
 
 def tile_key(lat, lng): return f"{math.floor(lat / TILE)}_{math.floor(lng / TILE)}"
+def inside(lat, lng): return BBOX[0] <= lat <= BBOX[2] and BBOX[1] <= lng <= BBOX[3]
 def poly_area(g):
     if len(g) < 3: return 0
     la, lo0 = g[0]; k = math.cos(math.radians(la)); a = 0
@@ -39,63 +23,66 @@ def poly_area(g):
         p, q = g[i], g[(i + 1) % len(g)]
         a += ((p[1] - lo0) * 111320 * k) * ((q[0] - la) * 110540) - ((q[1] - lo0) * 111320 * k) * ((p[0] - la) * 110540)
     return abs(a / 2)
-def geom(e, nd): return [[round(p["lat"], nd), round(p["lon"], nd)] for p in e.get("geometry", [])]
 
-def chunks():
-    s, w, n, e = BBOX; dy = (n - s) / CHUNKS[0]; dx = (e - w) / CHUNKS[1]
-    for i in range(CHUNKS[0]):
-        for j in range(CHUNKS[1]):
-            yield (round(s + i * dy, 4), round(w + j * dx, 4), round(s + (i + 1) * dy, 4), round(w + (j + 1) * dx, 4))
-
-def build(fetch=None, out=OUT):
-    feats, roads, seen_f, seen_r = {}, {}, set(), set()
-    def add(store, keys, item):
+class Collector:
+    """Turns OSM nodes/ways into the compact items the app reads, binned into tiles."""
+    def __init__(self): self.feats, self.roads, self.nf, self.nr = {}, {}, 0, 0
+    def _add(self, store, keys, item):
         for k in keys: store.setdefault(k, []).append(item)
-    for b in chunks():
-        bb = ",".join(map(str, b)); print("chunk", bb, flush=True)
-        els = overpass(f"""[out:json][timeout:240][bbox:{bb}];(way["amenity"="parking"];node["highway"="stop"];node["highway"="traffic_signals"];
-            way["junction"~"^(roundabout|circular)$"];node["leisure"="playground"];way["leisure"="playground"];
-            way["highway"~"^(motorway|trunk|motorway_link|trunk_link)$"];);out geom;""", fetch)
-        for e in els:
-            uid = (e["type"], e["id"])
-            if uid in seen_f: continue
-            seen_f.add(uid); t = e.get("tags", {})
-            if e["type"] == "node":
-                tags = {k: t[k] for k in ("highway", "stop", "leisure", "name") if k in t}
-                add(feats, [tile_key(e["lat"], e["lon"])], {"type": "node", "id": e["id"], "lat": round(e["lat"], 6), "lon": round(e["lon"], 6), "tags": tags}); continue
-            g = geom(e, 6)
-            if not g: continue
-            if t.get("amenity") == "parking":
-                if poly_area(g) < 6000: continue
-                tags = {k: t[k] for k in LOT_TAGS if k in t}; g = geom(e, 5)
-            elif t.get("leisure") == "playground":   # a point is enough
-                c = [round(sum(p[0] for p in g) / len(g), 6), round(sum(p[1] for p in g) / len(g), 6)]
-                add(feats, [tile_key(*c)], {"type": "node", "id": e["id"], "lat": c[0], "lon": c[1], "tags": {"leisure": "playground", **({"name": t["name"]} if "name" in t else {})}}); continue
-            else:
-                tags = {k: t[k] for k in ("highway", "junction", "name") if k in t}
-            item = {"type": "way", "id": e["id"], "tags": tags, "geometry": [{"lat": p[0], "lon": p[1]} for p in g]}
-            add(feats, sorted({tile_key(*p) for p in g}), item)
-        time.sleep(5)
-        els = overpass(f"""[out:json][timeout:240][bbox:{bb}];way["highway"~"{ROAD_RE}"];out tags geom;""", fetch)
-        for e in els:
-            if e["id"] in seen_r: continue
-            seen_r.add(e["id"]); t = e.get("tags", {}); g = geom(e, 5)
-            if len(g) < 2: continue
-            item = {"id": e["id"], "h": t.get("highway"), "g": g}
+    def node(self, nid, lat, lng, t):
+        if not inside(lat, lng): return
+        hw, le = t.get("highway"), t.get("leisure")
+        if hw in ("stop", "traffic_signals") or le == "playground":
+            tags = {k: t[k] for k in ("highway", "stop", "leisure", "name") if k in t}
+            self._add(self.feats, [tile_key(lat, lng)], {"type": "node", "id": nid, "lat": round(lat, 6), "lon": round(lng, 6), "tags": tags}); self.nf += 1
+    def way(self, wid, g, t):
+        if len(g) < 2 or not any(inside(*p) for p in g): return
+        hw = t.get("highway")
+        if hw in ROADS:
+            item = {"id": wid, "h": hw, "g": [[round(a, 5), round(b, 5)] for a, b in g]}
             if "maxspeed" in t: item["m"] = t["maxspeed"]
             if "name" in t: item["n"] = t["name"]
-            add(roads, sorted({tile_key(*p) for p in g}), item)
-        time.sleep(5)
-    for sub, store in (("f", feats), ("r", roads)):
-        d = os.path.join(out, sub); os.makedirs(d, exist_ok=True)
-        for f in os.listdir(d): os.remove(os.path.join(d, f))
-        for k, items in store.items():
-            with open(os.path.join(d, k + ".json"), "w") as fh: json.dump(items, fh, separators=(",", ":"))
-    idx = {"bbox": list(BBOX), "tile": TILE, "generated": time.strftime("%Y-%m-%d"), "f": sorted(feats), "r": sorted(roads),
-           "counts": {"featureTiles": len(feats), "roadTiles": len(roads), "features": len(seen_f), "roads": len(seen_r)}}
-    with open(os.path.join(out, "index.json"), "w") as fh: json.dump(idx, fh, separators=(",", ":"))
-    print("done", idx["counts"])
-    return idx
+            self._add(self.roads, sorted({tile_key(*p) for p in g}), item); self.nr += 1
+        feat = None
+        if t.get("amenity") == "parking":
+            if poly_area(g) >= 6000:
+                feat = {"type": "way", "id": wid, "tags": {k: t[k] for k in LOT_TAGS if k in t}, "geometry": [{"lat": round(a, 5), "lon": round(b, 5)} for a, b in g]}
+        elif t.get("leisure") == "playground":
+            c = [round(sum(p[0] for p in g) / len(g), 6), round(sum(p[1] for p in g) / len(g), 6)]
+            tags = {"leisure": "playground", **({"name": t["name"]} if "name" in t else {})}
+            self._add(self.feats, [tile_key(*c)], {"type": "node", "id": wid, "lat": c[0], "lon": c[1], "tags": tags}); self.nf += 1
+        elif t.get("junction") in ("roundabout", "circular") or hw in FAST:
+            tags = {k: t[k] for k in ("highway", "junction", "name") if k in t}
+            feat = {"type": "way", "id": wid, "tags": tags, "geometry": [{"lat": round(a, 6), "lon": round(b, 6)} for a, b in g]}
+        if feat:
+            self._add(self.feats, sorted({tile_key(p["lat"], p["lon"]) for p in feat["geometry"]}), feat); self.nf += 1
+    def write(self, out):
+        for sub, store in (("f", self.feats), ("r", self.roads)):
+            d = os.path.join(out, sub); os.makedirs(d, exist_ok=True)
+            for f in os.listdir(d): os.remove(os.path.join(d, f))
+            for k, items in store.items():
+                with open(os.path.join(d, k + ".json"), "w") as fh: json.dump(items, fh, separators=(",", ":"))
+        idx = {"bbox": list(BBOX), "tile": TILE, "generated": time.strftime("%Y-%m-%d"), "f": sorted(self.feats), "r": sorted(self.roads),
+               "counts": {"featureTiles": len(self.feats), "roadTiles": len(self.roads), "features": self.nf, "roads": self.nr}}
+        with open(os.path.join(out, "index.json"), "w") as fh: json.dump(idx, fh, separators=(",", ":"))
+        print("done", idx["counts"], flush=True)
+        return idx
+
+def build(path, out=OUT):
+    import osmium
+    col = Collector()
+    class H(osmium.SimpleHandler):
+        def node(self, n):
+            if n.tags: col.node(n.id, n.location.lat, n.location.lon, {t.k: t.v for t in n.tags})
+        def way(self, w):
+            t = {x.k: x.v for x in w.tags}
+            if not (t.get("highway") or t.get("amenity") == "parking" or t.get("leisure") == "playground" or t.get("junction")): return
+            try: g = [(n.lat, n.lon) for n in w.nodes]
+            except osmium.InvalidLocationError: g = [(n.lat, n.lon) for n in w.nodes if n.location.valid()]
+            col.way(w.id, g, t)
+    H().apply_file(path, locations=True)
+    return col.write(out)
 
 if __name__ == "__main__":
-    build()
+    if len(sys.argv) < 2: sys.exit("usage: build_osm_data.py region.osm.pbf [out_dir]")
+    build(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else OUT)
