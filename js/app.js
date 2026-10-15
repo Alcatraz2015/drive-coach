@@ -15,6 +15,10 @@ function migrate(x){
   x.sessions=x.sessions||[];x.skills=x.skills||{};x.pdata=x.pdata||{};
   x.settings=Object.assign({voice:true,speedAlerts:true,autoSpeedMarks:true,checklist:true},x.settings||{});
   if(x.onboarded==null)x.onboarded=true;
+  // Every stage route 1-6 must exist; bring back any that were deleted (empty, ready for pins).
+  TEMPLATES.forEach((t,i)=>{if(!x.routes.some(r=>stageNum(r)===i+1))x.routes.push({id:uid(),name:t.name,stage:t.stage,goal:t.goal,cps:t.cps.map(([n,k])=>({id:uid(),name:n,task:k,lat:null,lng:null}))})});
+  x.routes.sort((a,b)=>(stageNum(a)||99)-(stageNum(b)||99));
+  if(!x.routes.some(r=>r.id===x.activeRouteId))x.activeRouteId=x.routes[0].id;
   return x}
 const prof=()=>S.profiles.find(p=>p.id===S.profileId)||S.profiles[0];
 const route=()=>S.routes.find(r=>r.id===S.activeRouteId)||S.routes[0];
@@ -380,7 +384,7 @@ function renderRoutes(){const r=route(),n=stageNum(r);
    <button class="btn ${placing?'primary':''}" id="placeBtn">${placing?'Done placing pins':'Tap map to place pins'}</button>
    <div class="small muted">Pins can be reached in any order while driving. Drag a pin to fine-tune it.</div>
    ${cpList(r,true)}
-   <div class="row"><button class="btn" id="addCp">Add checkpoint</button><button class="btn" id="newRoute">New route</button><button class="btn danger" id="delRoute">Delete route</button></div>
+   <div class="row"><button class="btn" id="addCp">Add checkpoint</button><button class="btn" id="clearPins">Clear pins</button><button class="btn" id="newRoute">New route</button>${stageNum(r)?'':'<button class="btn danger" id="delRoute">Delete route</button>'}</div>
    <h3>Backup</h3><div class="row"><button class="btn" id="exportBtn">Back up all data</button><button class="btn" id="importBtn">Restore from backup</button></div>
    <div class="small muted" id="storageLine"></div>`}
 
@@ -494,7 +498,11 @@ pane.addEventListener('click',e=>{const pt=e.target.closest('[data-pt]');if(pt){
   if(d.del){const i=r.cps.findIndex(c=>c.id===d.del),c=r.cps[i];r.cps.splice(i,1);save();drawRoute();render();
     return toast('Checkpoint deleted',{action:()=>{r.cps.splice(i,0,c);save();drawRoute();render()}})}
   if(id==='newRoute'){const n={id:uid(),name:'My route',stage:'Custom',goal:'',cps:[],area:S.areaId||'calgary'};S.routes.push(n);S.activeRouteId=n.id;save();setPlacing(true);drawRoute();return render()}
-  if(id==='delRoute'){if(S.routes.length<2)return toast('Keep at least one route');if(confirmTap(t,'Tap again to delete')){S.routes=S.routes.filter(x=>x.id!==r.id);S.activeRouteId=S.routes[0].id;save();drawRoute();render()}return}
+  if(id==='clearPins'){if(!placedCps(r.cps).length)return toast('This route has no pins');const before=JSON.parse(JSON.stringify(r.cps));r.cps.forEach(c=>{c.lat=c.lng=null});delete r.path;save();drawRoute();render();
+    return toast('Pins cleared',{action:()=>{r.cps=before;save();drawRoute();render()}})}
+  if(id==='delRoute'){if(stageNum(r))return toast('Stage routes can be cleared but not deleted');if(!confirmTap(t,'Tap again to delete'))return;
+    const i=S.routes.indexOf(r);S.routes.splice(i,1);S.activeRouteId=S.routes[0].id;save();drawRoute();render();
+    return toast(`Deleted “${r.name}”`,{action:()=>{S.routes.splice(i,0,r);S.activeRouteId=r.id;save();drawRoute();render()}})}
   // skills
   if(d.sk){const l=+d.l;S.skills[d.sk]=S.skills[d.sk]===l?l-1:l;save();return render()}
   if(id==='resetSkills'){if(confirmTap(t,'Tap again to reset all skills')){const old={...S.skills};S.skills={};save();render();toast('Skill board reset',{action:()=>{S.skills=old;save();render()}})}return}
