@@ -1,0 +1,28 @@
+name: Update map data
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 9 * * 1"   # Mondays 3:17 a.m. Calgary time
+  push:
+    paths: ["scripts/build_osm_data.py", ".github/workflows/osm-data.yml"]
+permissions:
+  contents: write
+concurrency: osm-data
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: python scripts/build_osm_data.py
+      - name: Commit if changed
+        run: |
+          git config user.name "drive-coach-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/osm
+          git diff --cached --quiet && echo "No changes" && exit 0
+          git commit -m "Update OpenStreetMap data for the Calgary region"
+          git pull --rebase origin main
+          git push

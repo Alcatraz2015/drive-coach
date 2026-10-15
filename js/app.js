@@ -213,11 +213,11 @@ let busy=false,placeResults=[],lotPick=null;
 const NEED={1:['lot'],2:['stop','play'],3:['signals'],4:['round'],5:['ramp'],6:['lot','stop','signals','round']};
 async function autoBuild(){const r=route(),n=stageNum(r);
   if(!n||n>6)return toast('Auto-build works on the 6 stage routes. Use search or tap the map for custom routes.');
-  if(busy)return;const c=map.getCenter(),s=[c.lat,c.lng];busy=true;render();toast('Searching OpenStreetMap near the map centre…');
+  if(busy)return;const c=map.getCenter(),s=[c.lat,c.lng];busy=true;render();toast('Finding spots near the map centre…');
   try{const F=await OSM.features(NEED[n],s);
     if(n===1||n===6){const lots=rankLots(F,s);if(lots.length){busy=false;return showLotPicker({n,F,s,lots,routeId:r.id})}}
     applyBuild(r,buildStage(n,F,s,null))}
-  catch(e){toast(OSM.lastErr?`OpenStreetMap didn't answer (${OSM.lastErr}). Try again in a minute.`:'Something went wrong reading the map data: '+e.message,{ms:6000})}
+  catch(e){toast(OSM.lastErr?`This spot is outside the saved Calgary-area map data, and the live OpenStreetMap servers didn't answer (${OSM.lastErr}). Try again later, or use search or tap the map.`:'Something went wrong reading the map data: '+e.message,{ms:8000})}
   finally{busy=false;render()}}
 function applyBuild(r,cps){const found=cps.filter(c=>c.lat!=null).length;
   if(!found)return toast('Nothing suitable found here. Move the map or tap Near me, then try again.');
@@ -415,8 +415,9 @@ function render(){if(!S)return;
   pane.scrollTop=scrollMem[key]||0;lastKey=key;
   if(tab==='drive'&&sess)updateHud();
   if(tab==='routes')storageLine()}
-async function storageLine(){const el=document.getElementById('storageLine');const u=await Store.usage();
-  if(el&&u&&u.usage!=null)el.textContent=`Using ${(u.usage/1048576).toFixed(1)} MB on this phone.`}
+async function storageLine(){const el=document.getElementById('storageLine');const [u,d]=await Promise.all([Store.usage(),OSM.dataInfo()]);if(!el)return;
+  const parts=[];if(d)parts.push(`Map data for the Calgary area saved ${d.generated}; auto-build and speed limits work there without outside servers.`);
+  if(u&&u.usage!=null)parts.push(`Using ${(u.usage/1048576).toFixed(1)} MB on this phone.`);el.textContent=parts.join(' ')}
 function syncTabs(){document.querySelectorAll('.tabs button').forEach(x=>x.setAttribute('aria-selected',x.dataset.tab===tab))}
 function syncVoiceBtn(){const b=document.getElementById('voiceBtn');b.setAttribute('aria-pressed',S.settings.voice);b.title=b.ariaLabel=S.settings.voice?'Voice on':'Voice off';
   b.innerHTML=S.settings.voice?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"/></svg>'
