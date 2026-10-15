@@ -193,3 +193,9 @@ details.settings summary{cursor:pointer;font:800 13px/1.2 var(--display);text-tr
 .arrow{width:22px;height:22px;filter:drop-shadow(0 1px 1.5px rgb(0 0 0/.5))}
 .arrow svg{width:22px;height:22px;display:block}
 .arrow path{fill:#F2C53D;stroke:#1D1600;stroke-width:1.5;stroke-linejoin:round}
+
+/* turn-by-turn banner */
+.navbar{display:flex;gap:12px;align-items:center;background:var(--sign);color:var(--sign-ink);border-radius:12px;padding:10px 14px}
+.navbar .nicon{font:900 36px/1 var(--display);width:40px;text-align:center}
+.navbar .nd{font:700 22px/1.1 var(--mono);font-variant-numeric:tabular-nums}
+.navbar .nt{font-weight:700;font-size:15px;line-height:1.25}

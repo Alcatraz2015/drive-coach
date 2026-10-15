@@ -68,6 +68,30 @@ const OSM=(()=>{
       return {g:r.geometry.coordinates.map(c=>[+c[1].toFixed(5),+c[0].toFixed(5)]),km:+(r.distance/1000).toFixed(1),min:Math.round(r.duration/60)}}
     finally{clearTimeout(tm)}}
 
+  /* Fastest driving route A→B with turn-by-turn steps and the OSM node ids it passes (to tell which stop signs and lights are on it). */
+  async function navRoute(a,b){
+    const url=`https://router.project-osrm.org/route/v1/driving/${a[1].toFixed(6)},${a[0].toFixed(6)};${b[1].toFixed(6)},${b[0].toFixed(6)}?overview=full&geometries=geojson&steps=true&annotations=nodes`;
+    const ctl=new AbortController(),tm=setTimeout(()=>ctl.abort(),20000);
+    try{const res=await fetch(url,{signal:ctl.signal});if(!res.ok)throw new Error('router '+res.status);const j=await res.json();
+      if(j.code!=='Ok'||!j.routes||!j.routes[0])throw new Error(j.code==='NoRoute'?'No driving route between those points':'router: '+(j.message||j.code));
+      const r=j.routes[0],leg=r.legs[0];
+      return {g:r.geometry.coordinates.map(c=>[+c[1].toFixed(5),+c[0].toFixed(5)]),km:+(r.distance/1000).toFixed(1),min:Math.round(r.duration/60),
+        steps:leg.steps.map(st=>({type:st.maneuver.type,modifier:st.maneuver.modifier,exit:st.maneuver.exit,name:st.name||st.ref||'',loc:[st.maneuver.location[1],st.maneuver.location[0]]})),
+        nodes:(leg.annotation&&leg.annotation.nodes)||[]}}
+    finally{clearTimeout(tm)}}
+  /* Stop signs, lights and playgrounds near a path: from the saved Calgary data, or live Overpass elsewhere. Never throws. */
+  async function alongPath(g){
+    const ix=await index();
+    if(ix&&g.every(p=>inBox(p,ix.bbox))){const keys=new Set();let last=null;
+      for(const p of g){if(!last||hav(last,p)>400){keysAround(p,350,ix.tile).forEach(k=>ix.f.has(k)&&keys.add(k));last=p}}
+      keysAround(g[g.length-1],350,ix.tile).forEach(k=>ix.f.has(k)&&keys.add(k));
+      const seen=new Set(),out=[];for(const arr of await Promise.all([...keys].map(k=>tile('f',k))))for(const e of arr)if(e.type==='node'&&!seen.has(e.id)){seen.add(e.id);out.push(e)}
+      return out}
+    try{const pts=[];let last=null;for(const p of g)if(!last||hav(last,p)>150){pts.push(p);last=p}
+      const poly=pts.slice(0,400).map(p=>p[0].toFixed(5)+','+p[1].toFixed(5)).join(',');
+      return await overpass(`[out:json][timeout:25];(node(around:120,${poly})["highway"~"^(stop|traffic_signals)$"];node(around:120,${poly})["leisure"="playground"];);out;`,25000)}
+    catch(e){return []}}
+
   /* Move points onto the nearest drivable road. Returns [[lat,lng]|null...]; null = leave that point where it is (no road within maxM). */
   async function snap(pts,maxM=250){const tm=ms=>{const c=new AbortController();setTimeout(()=>c.abort(),ms);return c.signal};
     const one=async p=>{try{const r=await fetch(`https://router.project-osrm.org/nearest/v1/driving/${p[1].toFixed(6)},${p[0].toFixed(6)}?number=1`,{signal:tm(10000)});
@@ -79,5 +103,5 @@ const OSM=(()=>{
     const res=await fetch(url,{headers:{'Accept-Language':'en'}});if(!res.ok)throw new Error('search '+res.status);
     return (await res.json()).map(x=>({name:x.name||x.display_name.split(',')[0],addr:x.display_name.split(',').slice(1,3).join(',').trim(),ll:[+x.lat,+x.lon]}))}
 
-  return {overpass,features,roads,search,drivePath,snap,dataInfo,get lastErr(){return lastErr},get lastSource(){return lastSource}};
+  return {overpass,features,roads,search,drivePath,snap,navRoute,alongPath,dataInfo,get lastErr(){return lastErr},get lastSource(){return lastSource}};
 })();

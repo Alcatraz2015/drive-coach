@@ -90,3 +90,20 @@ test('lot pins are marked so they are not moved onto roads',()=>{
   const lot={ll:[51,-114],g:[[51,-114],[51.001,-114],[51.001,-113.998],[51,-113.998]],area:20000};
   assert.ok(L.buildStage(1,{lot:[]},[51.01,-114],lot).every(c=>c.onLot));
 });
+
+test('A to B: turns, controls on the route only, playgrounds, destination, in order',()=>{
+  const g=[[51,-114],[51.005,-114],[51.005,-113.99],[51.010,-113.99]];
+  const steps=[{type:'depart',loc:g[0]},{type:'turn',modifier:'right',name:'Mahogany Blvd SE',loc:g[1]},{type:'turn',modifier:'left',name:'Mahogany Dr SE',loc:g[2]},{type:'arrive',loc:g[3]}];
+  const els=[{type:'node',id:7,lat:51.0049,lon:-114,tags:{highway:'traffic_signals'}},
+             {type:'node',id:8,lat:51.0049,lon:-114.0001,tags:{highway:'stop'}},          // side-street stop, not on the route
+             {type:'node',id:9,lat:51.0051,lon:-113.995,tags:{highway:'stop'}},
+             {type:'node',id:10,lat:51.0052,lon:-113.996,tags:{leisure:'playground'}}];
+  const cps=L.planDrive({g,steps,nodes:[7,9]},els);
+  assert.deepEqual(cps.map(c=>c.kind),['signals','play','stop','left','dest']);
+  assert.equal(cps[0].name,'Right turn at lights · Mahogany Blvd SE');
+  assert.equal(L.spotSummary(cps),'1 set of lights, 1 playground zone, 1 stop sign, 1 left turn');
+  const m=L.maneuvers(steps,g,L.cumDist(g));
+  assert.equal(m[0].text,'Turn right onto Mahogany Blvd SE');assert.ok(m[1].along>m[0].along);
+  assert.equal(L.instruction({type:'roundabout',exit:2,name:'Seton Blvd'}),'At the roundabout, take the 2nd exit onto Seton Blvd');
+  const p=L.projectOnPath(g,L.cumDist(g),[51.0025,-114.0007]);assert.ok(p.off>40&&p.off<60&&p.i===0);
+});
