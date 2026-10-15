@@ -120,3 +120,15 @@ test('playground zones only count on ordinary streets',()=>{
 test('voice lines talk to the driver, not about her',()=>{
   Object.values(L.SAY).forEach(t=>assert.ok(!/\bshe\b|\bher\b/i.test(t),t));
 });
+
+test('street names are read out in full',()=>{
+  const cases={'Turn left onto Mahogany Blvd SE.':'Turn left onto Mahogany Boulevard South East.',
+    'Turn right onto Silver Springs Gate NW':'Turn right onto Silver Springs Gate North West',
+    'Turn right onto Edmonton Trail N.E.':'Turn right onto Edmonton Trail North East',
+    'Turn right onto St Albert Trail':'Turn right onto Saint Albert Trail',
+    'Turn left onto Main St SE':'Turn left onto Main Street South East',
+    'Turn left onto 16 Ave N':'Turn left onto 16 Avenue North',
+    'Merge onto Queen Elizabeth II Highway.':'Merge onto Queen Elizabeth the Second Highway.',
+    'East Lake Cres NE':'East Lake Crescent North East','Speed limit 50.':'Speed limit 50.','Stop sign ahead. Full stop at the line.':'Stop sign ahead. Full stop at the line.'};
+  for(const [a,b] of Object.entries(cases))assert.equal(L.speakable(a),b);
+});

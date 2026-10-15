@@ -235,8 +235,21 @@ const PLURAL={'Stop sign':'stop signs','4-way stop':'4-way stops','Traffic light
 function spotSummary(cps){const c={};cps.forEach(x=>{if(x.kind&&x.kind!=='dest'){const n=SPOTS[x.kind][0];c[n]=(c[n]||0)+1}});
   return Object.entries(c).sort((a,b)=>b[1]-a[1]).map(([k,n])=>n===1?(k==='Traffic lights'?'1 set of lights':`1 ${k.toLowerCase()}`):`${n} ${PLURAL[k]}`).join(', ')}
 
+/* Make street names sound right when read aloud: "Mahogany Blvd SE" → "Mahogany Boulevard South East". Only used for the voice. */
+const QUAD={NE:'North East',NW:'North West',SE:'South East',SW:'South West',N:'North',S:'South',E:'East',W:'West'};
+const ABBR={Blvd:'Boulevard',Bv:'Boulevard',Ave:'Avenue',Av:'Avenue',St:'Street',Dr:'Drive',Rd:'Road',Cres:'Crescent',Cr:'Crescent',Tr:'Trail',Trl:'Trail',
+  Hwy:'Highway',Pkwy:'Parkway',Pl:'Place',Ct:'Court',Cir:'Circle',Ln:'Lane',Gdns:'Gardens',Gt:'Gate',Hts:'Heights',Mews:'Mews',Pt:'Point',Rdg:'Ridge',Terr:'Terrace',Way:'Way',Sq:'Square',Lk:'Lake',Pk:'Park',Mt:'Mount',Ft:'Fort'};
+function speakable(t){if(!t)return t;
+  t=t.replace(/\b([NS])\.\s?([EW])\.?(?=[\s,.;]|$)/g,'$1$2');                                   // N.E. → NE
+  t=t.replace(/\bSt\.?\s+(?=[A-Z][a-z])/g,'Saint ');                                           // St Albert → Saint Albert (Main St SE stays Street below)
+  t=t.replace(/\b(NE|NW|SE|SW)\b/g,m=>QUAD[m]);
+  t=t.replace(/\b(Street|Avenue|Trail|Road|Drive|Boulevard|Way|Gate|Crescent|Highway|St|Ave|Tr|Rd|Dr|Blvd)\.?\s+([NSEW])\b(?!['’])/g,(m,a,b)=>a+' '+QUAD[b]);
+  t=t.replace(/\b([A-Z][a-z]{1,4})\.?(?=\s|$|,|\.)/g,(m,w)=>ABBR[w]&&w!=='Way'&&w!=='Mews'?ABBR[w]:m);
+  t=t.replace(/\b(Queen Elizabeth) II\b/g,'$1 the Second').replace(/\bQE ?II\b|\bQE2\b/g,'Q E 2');
+  return t}
+
 const API={uid,esc,hav,bearing,angDiff,fmtDur,fmtDist,stageNum,median,GPS,acceptFix,smoothSpeed,thinTrack,placedCps,arrivals,nextTarget,skippedCps,
   skillPct,hours,badFlags,mistakeSeries,topMistakes,suggestNext,curfew,testEligibleFrom,parseMaxspeed,inBox,segDist,limitAt,
-  roadAt,playZoneRoad,SAY,pathArrows,cumDist,projectOnPath,instruction,maneuvers,planDrive,spotSummary,SPOTS,polyArea,cluster,carLot,parseFeatures,rankLots,lotPins,walkRamp,buildStage};
+  roadAt,playZoneRoad,SAY,speakable,pathArrows,cumDist,projectOnPath,instruction,maneuvers,planDrive,spotSummary,SPOTS,polyArea,cluster,carLot,parseFeatures,rankLots,lotPins,walkRamp,buildStage};
 if(typeof module!=='undefined')module.exports=API;else Object.assign(root,API);
 })(typeof window!=='undefined'?window:globalThis);

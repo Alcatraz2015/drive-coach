@@ -98,7 +98,7 @@ function say(text,{prio=1,ttl=8000,man=null}={}){if(!S.settings.voice||!('speech
   if(speech.q.some(x=>x.text===text))return;const it={text,prio,t:Date.now(),ttl,man};let i=speech.q.findIndex(x=>x.prio<prio);if(i<0)i=speech.q.length;speech.q.splice(i,0,it);pumpSpeech()}
 function pumpSpeech(){if(speech.busy)return;while(speech.q.length&&Date.now()-speech.q[0].t>speech.q[0].ttl)speech.q.shift();const it=speech.q.shift();if(!it)return;
   speech.busy=true;const done=()=>{if(!speech.busy)return;speech.busy=false;clearTimeout(speech.guard);setTimeout(pumpSpeech,120)};
-  try{const u=new SpeechSynthesisUtterance(it.text);u.lang='en-CA';u.rate=1;u.onend=done;u.onerror=done;speechSynthesis.speak(u);lastSaid=it.text}catch(e){done()}
+  try{const u=new SpeechSynthesisUtterance(speakable(it.text));u.lang='en-CA';u.rate=1;u.onend=done;u.onerror=done;speechSynthesis.speak(u);lastSaid=it.text}catch(e){done()}
   speech.guard=setTimeout(done,2500+it.text.length*85)}
 function hush(){speech.q.length=0;speech.busy=false;clearTimeout(speech.guard);try{speechSynthesis.cancel()}catch(e){}}
 function beep(freq=880,dur=.45,times=1){try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();
