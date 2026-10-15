@@ -107,3 +107,16 @@ test('A to B: turns, controls on the route only, playgrounds, destination, in or
   assert.equal(L.instruction({type:'roundabout',exit:2,name:'Seton Blvd'}),'At the roundabout, take the 2nd exit onto Seton Blvd');
   const p=L.projectOnPath(g,L.cumDist(g),[51.0025,-114.0007]);assert.ok(p.off>40&&p.off<60&&p.i===0);
 });
+
+test('playground zones only count on ordinary streets',()=>{
+  assert.equal(L.playZoneRoad({highway:'residential'}),true);
+  assert.equal(L.playZoneRoad({highway:'primary',maxspeed:'50'}),true);
+  assert.equal(L.playZoneRoad({highway:'motorway'}),false);
+  assert.equal(L.playZoneRoad({highway:'trunk',maxspeed:'100'}),false);
+  assert.equal(L.playZoneRoad({highway:'primary',maxspeed:'80'}),false);
+  assert.equal(L.playZoneRoad({highway:'motorway_link'}),false);
+  assert.equal(L.playZoneRoad(undefined),false);
+});
+test('voice lines talk to the driver, not about her',()=>{
+  Object.values(L.SAY).forEach(t=>assert.ok(!/\bshe\b|\bher\b/i.test(t),t));
+});

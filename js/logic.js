@@ -74,11 +74,17 @@ const inBox=(ll,b)=>ll[0]>=b[0]&&ll[0]<=b[2]&&ll[1]>=b[1]&&ll[1]<=b[3];
 function segDist(p,a,b){const k=Math.cos(p[0]*RAD),ax=(a[1]-p[1])*k,ay=a[0]-p[0],bx=(b[1]-p[1])*k,by=b[0]-p[0],dx=bx-ax,dy=by-ay;
   const t=dx||dy?Math.max(0,Math.min(1,-(ax*dx+ay*dy)/(dx*dx+dy*dy))):0;return Math.hypot(ax+t*dx,ay+t*dy)*111320}
 /* Limit for the road the car is on: nearest way within 25 m, preferring one that points the way we're heading. */
-function limitAt(ways,ll,heading){let best=null;
+/* Nearest road to ll (within 25 m), preferring one pointing the way we're heading. */
+function roadAt(ways,ll,heading){let best=null;
   for(const w of ways){const g=w.g;for(let i=0;i<g.length-1;i++){let d=segDist(ll,g[i],g[i+1]);
     if(heading!=null){const b=bearing(g[i],g[i+1]),off=Math.min(angDiff(b,heading),angDiff((b+180)%360,heading));if(off>40)d+=15}
     if(d<25&&(!best||d<best.d))best={d,w}}}
-  if(!best)return null;const t=best.w.tags||{};let v=parseMaxspeed(t.maxspeed),assumed=false;
+  return best&&best.w}
+/* Playground zones apply on ordinary streets, not highways, ramps or 70+ roads. */
+function playZoneRoad(t){if(!t)return false;if(/^(motorway|trunk)(_link)?$/.test(t.highway||'')||/_link$/.test(t.highway||''))return false;
+  const v=parseMaxspeed(t.maxspeed);return v==null||v<70}
+function limitAt(ways,ll,heading){const w=roadAt(ways,ll,heading);
+  if(!w)return null;const t=w.tags||{};let v=parseMaxspeed(t.maxspeed),assumed=false;
   if(v==null&&/^(residential|living_street)$/.test(t.highway||'')&&inBox(ll,D.CALGARY_BOX)){v=D.CALGARY_RES_LIMIT;assumed=true}
   return v==null?null:{kmh:v,assumed,road:t.name||''}}
 
@@ -196,6 +202,9 @@ const SPOTS={
   play:['Playground zone','30 km/h, 7:30 a.m. to 9 p.m. Watch between parked cars.'],
   dest:['Destination','Park safely at the curb or in a stall.']};
 const CONTROL={stop:'a stop sign',allway:'a 4-way stop',signals:'lights'};
+/* What the voice says to the driver as a spot comes up (tips stay on screen for the supervisor). */
+const SAY={stop:'Stop sign ahead. Full stop at the line.',allway:'Four-way stop ahead.',signals:'Traffic lights ahead.',play:'Playground zone. Slow to 30.',
+  left:'Left turn ahead.',right:'Right turn ahead.',uturn:'U-turn ahead.',roundabout:'Roundabout ahead.',merge:'Highway merge ahead.',exit:'Highway exit ahead.',dest:'You have arrived.'};
 /* Turn a planned drive into checkpoints, in driving order.
    nav = {g, steps:[{type,modifier,exit,name,loc}], nodes:[OSM node ids on the route]}; els = OSM elements near the path. */
 function planDrive(nav,els,mkId=uid){
@@ -228,6 +237,6 @@ function spotSummary(cps){const c={};cps.forEach(x=>{if(x.kind&&x.kind!=='dest')
 
 const API={uid,esc,hav,bearing,angDiff,fmtDur,fmtDist,stageNum,median,GPS,acceptFix,smoothSpeed,thinTrack,placedCps,arrivals,nextTarget,skippedCps,
   skillPct,hours,badFlags,mistakeSeries,topMistakes,suggestNext,curfew,testEligibleFrom,parseMaxspeed,inBox,segDist,limitAt,
-  pathArrows,cumDist,projectOnPath,instruction,maneuvers,planDrive,spotSummary,SPOTS,polyArea,cluster,carLot,parseFeatures,rankLots,lotPins,walkRamp,buildStage};
+  roadAt,playZoneRoad,SAY,pathArrows,cumDist,projectOnPath,instruction,maneuvers,planDrive,spotSummary,SPOTS,polyArea,cluster,carLot,parseFeatures,rankLots,lotPins,walkRamp,buildStage};
 if(typeof module!=='undefined')module.exports=API;else Object.assign(root,API);
 })(typeof window!=='undefined'?window:globalThis);

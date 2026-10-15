@@ -45,7 +45,7 @@ function initMap(){
   trackLine=L.polyline([],{color:'#2F7DE1',weight:5,opacity:.85}).addTo(map);
   map.on('click',onMapClick);
   map.on('zoomend',()=>arrowPath&&drawArrows(arrowPath));
-  map.on('dragstart',()=>{if(follow){follow=false;document.getElementById('locBtn').setAttribute('aria-pressed','false')}});
+  map.on('dragstart',()=>{userPanAt=Date.now();if(follow){follow=false;document.getElementById('locBtn').setAttribute('aria-pressed','false')}});
 }
 const carIcon=h=>L.divIcon({className:'',iconSize:[40,40],iconAnchor:[20,20],html:`<div class="car" style="transform:rotate(${h||0}deg)"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="13" fill="#2F7DE1" stroke="#fff" stroke-width="3"/><path d="M20 10l6 14-6-3.5-6 3.5z" fill="#fff"/></svg></div>`});
 const flagIcon=good=>L.divIcon({className:'',iconSize:[22,22],iconAnchor:[11,11],html:`<div class="flag" style="${good?'background:var(--ok)':''}">${good?'★':'!'}</div>`});
@@ -91,8 +91,16 @@ function setPlacing(v,text){placing=v&&!text;const b=document.getElementById('pl
 let actx=null,lastSaid='';
 function unlockAudio(){try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();actx.resume?.()}catch(e){}
   try{if(S.settings.voice&&'speechSynthesis' in window){const u=new SpeechSynthesisUtterance(' ');u.volume=0;speechSynthesis.speak(u)}}catch(e){}}
-function say(text,{interrupt=false}={}){if(!S.settings.voice||!('speechSynthesis' in window)||!text)return;
-  try{if(interrupt)speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.lang='en-CA';u.rate=1.02;speechSynthesis.speak(u);lastSaid=text}catch(e){}}
+/* Speech queue: nothing is ever cut off mid-sentence. Higher priority jumps the line; stale lines are dropped.
+   prio 3 = turn now / arrival, 2 = upcoming turn / speed limit, 1 = spot ahead / info. */
+const speech={q:[],busy:false,guard:null};
+function say(text,{prio=1,ttl=8000,man=null}={}){if(!S.settings.voice||!('speechSynthesis' in window)||!text)return;
+  if(speech.q.some(x=>x.text===text))return;const it={text,prio,t:Date.now(),ttl,man};let i=speech.q.findIndex(x=>x.prio<prio);if(i<0)i=speech.q.length;speech.q.splice(i,0,it);pumpSpeech()}
+function pumpSpeech(){if(speech.busy)return;while(speech.q.length&&Date.now()-speech.q[0].t>speech.q[0].ttl)speech.q.shift();const it=speech.q.shift();if(!it)return;
+  speech.busy=true;const done=()=>{if(!speech.busy)return;speech.busy=false;clearTimeout(speech.guard);setTimeout(pumpSpeech,120)};
+  try{const u=new SpeechSynthesisUtterance(it.text);u.lang='en-CA';u.rate=1;u.onend=done;u.onerror=done;speechSynthesis.speak(u);lastSaid=it.text}catch(e){done()}
+  speech.guard=setTimeout(done,2500+it.text.length*85)}
+function hush(){speech.q.length=0;speech.busy=false;clearTimeout(speech.guard);try{speechSynthesis.cancel()}catch(e){}}
 function beep(freq=880,dur=.45,times=1){try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();
   for(let i=0;i<times;i++){const t0=actx.currentTime+i*(dur+.08),o=actx.createOscillator(),g=actx.createGain();o.frequency.value=freq;
     g.gain.setValueAtTime(.0001,t0);g.gain.exponentialRampToValueAtTime(.3,t0+.02);g.gain.exponentialRampToValueAtTime(.0001,t0+dur);o.connect(g).connect(actx.destination);o.start(t0);o.stop(t0+dur)}}catch(e){}
@@ -100,6 +108,7 @@ function beep(freq=880,dur=.45,times=1){try{actx=actx||new (window.AudioContext|
 const cpLine=(c,withTask=true)=>c?`${c.name}.${withTask&&c.task?' '+c.task:''}`:'';
 
 /* ---------- location ---------- */
+let userPanAt=0,zoomAt=0;const followZoom=kmh=>kmh<45?17:kmh<80?16:15;
 let watchId=null,follow=false,lastFix=null,lastAccepted=null,jumpRun=0;const speedBuf=[];
 function ensureWatch(){if(watchId!=null)return true;
   if(!('geolocation' in navigator)){toast('This browser has no GPS access');return false}
@@ -114,8 +123,9 @@ function onPos(p){
   if(!carMarker){carMarker=L.marker(ll,{icon:carIcon(hd),zIndexOffset:1000,interactive:false}).addTo(map);
     accCircle=L.circle(ll,{radius:acc,color:'#2F7DE1',weight:1,fillOpacity:.08,interactive:false}).addTo(map);if(!sess)map.setView(ll,16)}
   else{carMarker.setLatLng(ll);carMarker.setIcon(carIcon(hd));accCircle.setLatLng(ll).setRadius(acc)}
-  if(follow)map.panTo(ll,{animate:true});
   const sm=smoothSpeed(speedBuf,kmh);lastFix={ll,t:now,hd,acc,kmh:sm};
+  if(!follow&&sess&&!ending&&Date.now()-userPanAt>10000){follow=true;document.getElementById('locBtn').setAttribute('aria-pressed','true')}
+  if(follow){const z=sess?followZoom(sm):map.getZoom();if(sess&&z!==map.getZoom()&&Date.now()-zoomAt>8000){zoomAt=Date.now();map.setView(ll,z,{animate:true})}else map.panTo(ll,{animate:true,duration:.5})}
   if(sess&&!ending){
     sess.kmh=sm;if(sm>sess.maxKmh&&speedBuf.length>=3)sess.maxKmh=sm;
     const a=acceptFix(lastAccepted,{ll,t:now,acc});
@@ -124,8 +134,8 @@ function onPos(p){
     if(acc<=50&&a.why!=='jump'){const r=route();arrivals(r.cps,sess.done,ll,ARRIVE_M).forEach(c=>markDone(c,true));
       const nx=nextTarget(r.cps,sess.done);sess.nextDist=nx?hav(ll,[nx.lat,nx.lng]):null;
       if(nx&&sess.nextDist<=ANNOUNCE_M&&!sess.announced.includes(nx.id)&&nx.kind!=='dest'){sess.announced.push(nx.id);sess.told=sess.told||[];const first=!nx.kind||!sess.told.includes(nx.kind);
-        if(!r.nav){if(nx.kind)sess.told.push(nx.kind);say(`In ${Math.round(sess.nextDist/50)*50} metres: ${cpLine(nx)}`)}
-        else if(['stop','allway','signals','play'].includes(nx.kind)&&!nearManeuver(r,nx)){sess.told.push(nx.kind);say(first?`Coming up: ${cpLine(nx)}`:`${nx.name.split(' · ')[0]} ahead`)}}}
+        if(!r.nav){say(`In ${Math.round(sess.nextDist/50)*50} metres: ${nx.name.split(' · ')[0]}.`)}
+        else if(['stop','allway','signals','play'].includes(nx.kind)&&!nearManeuver(r,nx)){say(SAY[nx.kind]||`${nx.name.split(' · ')[0]} ahead.`)}}}
     if(route().nav)navUpdate(ll,acc,now);
     checkSpeed(ll,hd,now)}
   if(tab==='drive')updateHud();
@@ -139,7 +149,7 @@ function checkSpeed(ll,hd,now){if(!S.settings.speedAlerts){lim.cur=null;return}
   refreshRoads(ll);lim.cur=lim.ways.length?limitAt(lim.ways,ll,sess.kmh>8?hd:null):null;
   if(!lim.cur||sess.kmh<15){lim.over=0;return}
   lim.over=sess.kmh>lim.cur.kmh+5?lim.over+1:0;
-  if(lim.over>=3&&now-lim.warnAt>30000){lim.warnAt=now;beep(660,.25,2);say(`Speed limit ${lim.cur.kmh}`,{interrupt:true});
+  if(lim.over>=3&&(lim.warnedFor!==lim.cur.kmh||now-lim.warnAt>60000)){lim.warnAt=now;lim.warnedFor=lim.cur.kmh;beep(660,.25,2);say(`Speed limit ${lim.cur.kmh}.`,{prio:2,ttl:4000});
     if(S.settings.autoSpeedMarks&&now-lim.markAt>60000){lim.markAt=now;addFlag('Too fast',{auto:true,limit:lim.cur.kmh})}}}
 
 /* ---------- drive A → B ---------- */
@@ -147,7 +157,11 @@ let pickingDest=false,destResults=[],planning=false;const navState={hint:null,of
 const DRIVE_ID='driveto';
 async function myPosition(){if(lastFix&&Date.now()-lastFix.t<60000)return lastFix.ll;
   return new Promise(res=>{if(!navigator.geolocation)return res(null);navigator.geolocation.getCurrentPosition(p=>res([p.coords.latitude,p.coords.longitude]),()=>res(null),{enableHighAccuracy:true,timeout:10000})})}
-async function buildNav(from,dest){const nav=await OSM.navRoute(from,dest.ll),els=await OSM.alongPath(nav.g),cps=planDrive(nav,els);
+async function buildNav(from,dest){const nav=await OSM.navRoute(from,dest.ll),raw=await OSM.alongPath(nav.g),cum0=cumDist(nav.g),els=[];
+  for(const e of raw){if((e.tags||{}).leisure!=='playground'){els.push(e);continue}
+    const p=projectOnPath(nav.g,cum0,[e.lat,e.lon]);if(!p||p.off>100)continue;const at=nav.g[p.i];
+    try{const {ways}=await OSM.roads(at);if(playZoneRoad((roadAt(ways,at,null)||{}).tags))els.push(e)}catch(err){}}
+  const cps=planDrive(nav,els);
   const cum=cumDist(nav.g);return {nav:{g:nav.g,man:maneuvers(nav.steps,nav.g,cum),km:nav.km,min:nav.min},cps}}
 async function planDriveTo(dest){if(sess)return toast('End the lesson first');if(planning)return;planning=true;destResults=[];render();toast('Planning the route…',{ms:15000});
   try{let from=await myPosition();if(!from){const c=map.getCenter();from=[c.lat,c.lng];toast('No GPS fix, so the route starts from the map centre')}
@@ -168,16 +182,16 @@ function navUpdate(ll,acc,now){const r=route(),nv=r.nav;if(!nv||!nv.man)return;i
   if(acc<=30){navState.off=p.off>50?navState.off+1:0;if(navState.off>=3&&now-navState.rerouteAt>20000){navState.rerouteAt=now;navState.off=0;reroute(ll)}}
   const m=nv.man.find(x=>x.along>p.along+8);navState.next=m?{m,dist:m.along-p.along}:null;if(!m)return;
   const d=m.along-p.along,key=m.along.toFixed(0),said=navState.said[key]||0,fast=(sess.kmh||0)>65,far=fast?700:300;
-  if(said<1&&d<=far&&d>(fast?250:90)){navState.said[key]=1;const cp=r.cps.find(c=>c.kind&&c.kind!=='dest'&&!sess.done.includes(c.id)&&hav([c.lat,c.lng],m.ll)<45);
-    let tip='';if(cp){sess.told=sess.told||[];if(!sess.told.includes(cp.kind)){sess.told.push(cp.kind);tip=' '+cp.task}sess.announced.push(cp.id)}
-    say(`In ${d>=1000?(d/1000).toFixed(1)+' kilometres':Math.round(d/50)*50+' metres'}, ${m.text.charAt(0).toLowerCase()+m.text.slice(1)}.${tip}`)}
-  else if(said<2&&d<=(fast?250:60)){navState.said[key]=2;say(m.text,{interrupt:true})}}
-async function reroute(ll){const r=route();if(!r.dest)return;say('Rerouting',{interrupt:true});toast('Off the route. Re-planning…');
+  if(said<1&&d<=far&&d>(fast?250:60)){navState.said[key]=1;const cp=r.cps.find(c=>c.kind&&c.kind!=='dest'&&!sess.done.includes(c.id)&&hav([c.lat,c.lng],m.ll)<45);
+    if(cp)sess.announced.push(cp.id);
+    say(`In ${d>=1000?(d/1000).toFixed(1)+' kilometres':Math.round(d/50)*50+' metres'}, ${m.text.charAt(0).toLowerCase()+m.text.slice(1)}.`,{prio:2,ttl:12000,man:key})}
+  else if(said<2&&d<=(fast?250:60)){navState.said[key]=2;const far=speech.q.findIndex(x=>x.man===key);if(far>=0)speech.q.splice(far,1);say(m.text,{prio:3})}}
+async function reroute(ll){const r=route();if(!r.dest)return;say('Rerouting.',{prio:2,ttl:5000});toast('Off the route. Re-planning…');
   try{const {nav,cps}=await buildNav(ll,r.dest);if(route()!==r||!sess)return;
     const done=r.cps.filter(c=>sess.done.includes(c.id)),fresh=cps.filter(c=>!done.some(d=>hav([d.lat,d.lng],[c.lat,c.lng])<40));
     r.cps=[...done,...fresh];r.nav=nav;r.goal=`${nav.km} km · about ${nav.min} min · ${spotSummary(fresh)||'no marked spots'}`;r.path={key:pathKey(placedCps(r.cps).map(c=>[c.lat,c.lng])),g:nav.g,km:nav.km,min:nav.min};
     navState.hint=null;navState.said={};navState.next=nav.man[0]?{m:nav.man[0],dist:nav.man[0].along}:null;save();drawRoute();render();persistActive();
-    const m=nav.man[0];toast(`New route: ${nav.km} km, about ${nav.min} min`);if(m)say(m.text)}
+    const m=nav.man[0];toast(`New route: ${nav.km} km, about ${nav.min} min`);if(m)say(m.text+'.',{prio:2})}
   catch(e){toast('Off the route and couldn\'t re-plan. Follow the map back to the yellow line.',{ms:6000})}}
 const nearManeuver=(r,c)=>r.nav&&r.nav.man.some(m=>hav(m.ll,[c.lat,c.lng])<45);
 function navBanner(){const r=route();if(!r.nav)return '';
@@ -188,14 +202,14 @@ let sess=null,ending=false,tick=null,hudTimer=null,wake=null,expanded=false,pres
 let endForm={feel:0,notes:''};const flagMarkers=new Map();
 function newSession(){navState.hint=null;navState.off=0;navState.said={};navState.next=null;return {id:uid(),start:Date.now(),routeId:route().id,track:[],km:0,maxKmh:0,kmh:0,done:[],flags:[],announced:[],nextDist:null}}
 async function grabWake(){try{if(!wake)wake=await navigator.wakeLock?.request('screen');wake?.addEventListener?.('release',()=>{wake=null})}catch(e){}}
-function beginRunning(){ensureWatch();follow=true;document.getElementById('locBtn').setAttribute('aria-pressed','true');
+function beginRunning(){ensureWatch();follow=true;userPanAt=0;zoomAt=0;document.getElementById('locBtn').setAttribute('aria-pressed','true');if(lastFix)map.setView(lastFix.ll,17);
   grabWake();clearInterval(tick);tick=setInterval(()=>{if(tab==='drive')updateHud();persistActive()},5000);
   if(!hudTimer)hudTimer=setInterval(()=>sess&&tab==='drive'&&updateHud(),1000);
   document.getElementById('voiceBtn').hidden=false;syncVoiceBtn();drawRoute();render()}
 function startSession(){unlockAudio();prestart=false;expanded=false;lim.over=0;
   sess=newSession();lastAccepted=null;speedBuf.length=0;
   trackLine.setLatLngs([]);flagLayer.clearLayers();flagMarkers.clear();histLayer.clearLayers();setPlacing(false);
-  const nx=nextTarget(route().cps,[]),rr=route();say(rr.nav?`Lesson started. Driving to ${rr.dest.name}, ${rr.nav.km} kilometres.${rr.nav.man[0]?' '+rr.nav.man[0].text+' when you get there.':''}`:nx?`Lesson started. First: ${cpLine(nx)}`:'Lesson started. Free drive.',{interrupt:true});
+  const nx=nextTarget(route().cps,[]),rr=route();say(rr.nav?`Let's go. ${rr.nav.km} kilometres to ${rr.dest.name}.`:nx?`Let's go. First: ${nx.name.split(' · ')[0]}.`:"Let's go.",{prio:2,ttl:15000});
   persistActive();beginRunning()}
 function persistActive(){if(!sess)return;Store.set('active',{sess,endForm,ending,profileId:S.profileId,routeId:sess.routeId,saved:Date.now()})}
 function resumeActive(a,thenEnd){pendingResume=null;
@@ -209,8 +223,8 @@ function resumeActive(a,thenEnd){pendingResume=null;
   ending=!!thenEnd||!!a.ending;tab='drive';syncTabs();beginRunning();if(!thenEnd)toast('Lesson resumed')}
 function markDone(c,auto){if(!sess||!c||sess.done.includes(c.id))return;sess.done.push(c.id);sess.nextDist=null;beep(880,.45,2);
   const r=route(),nx=nextTarget(r.cps,sess.done);
-  if(r.nav){if(c.kind==='dest')say('You have arrived. End the lesson when you are parked.',{interrupt:true})}
-  else say(nx?`Reached ${c.name}. Next: ${cpLine(nx)}`:`Reached ${c.name}. All checkpoints done. Head back and end the lesson.`,{interrupt:true});
+  if(r.nav){if(c.kind==='dest')say('You have arrived.',{prio:3,ttl:20000})}
+  else say(nx?`Done. Next: ${nx.name.split(' · ')[0]}.`:'All checkpoints done. Head back.',{prio:2});
   toast((auto?'Reached ':'Done: ')+c.name,{action:()=>{sess&&(sess.done=sess.done.filter(x=>x!==c.id),sess.announced=sess.announced.filter(x=>x!==c.id));drawRoute();render();persistActive()}});
   persistActive();drawRoute();render()}
 function addFlag(label,extra={}){if(!sess)return;if(!lastFix)return toast('Waiting for GPS…');
@@ -228,7 +242,7 @@ function finishSession(keep){
       cps:r.cps.map((c,i)=>({n:i+1,name:c.name,task:c.task,done:sess.done.includes(c.id),ll:c.lat!=null?[+c.lat.toFixed(5),+c.lng.toFixed(5)]:null})).filter(c=>c.ll)});
     reportView=sess.id;save();Store.flush();toast('Lesson saved to the log')}
   clearInterval(tick);try{wake?.release()}catch(e){}wake=null;sess=null;ending=false;expanded=false;endForm={feel:0,notes:''};
-  Store.del('active');try{speechSynthesis.cancel()}catch(e){}
+  Store.del('active');hush();
   document.getElementById('voiceBtn').hidden=true;trackLine.setLatLngs([]);flagLayer.clearLayers();flagMarkers.clear();drawRoute();render()}
 
 /* ---------- profiles ---------- */
@@ -605,7 +619,7 @@ document.getElementById('importFile').onchange=e=>{const f=e.target.files[0];if(
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;reportView=null;prestart=false;if(lotPick)cancelLotPick();syncTabs();if(tab!=='routes')setPlacing(false);render()});
 document.getElementById('locBtn').onclick=e=>{if(!ensureWatch())return;follow=!follow;e.currentTarget.setAttribute('aria-pressed',follow);if(follow&&lastFix)map.setView(lastFix.ll,17)};
 document.getElementById('fitBtn').onclick=()=>fitRoute();
-document.getElementById('voiceBtn').onclick=()=>{S.settings.voice=!S.settings.voice;save();syncVoiceBtn();if(S.settings.voice){unlockAudio();say('Voice on')}else try{speechSynthesis.cancel()}catch(e){};toast(S.settings.voice?'Voice prompts on':'Voice prompts off')};
+document.getElementById('voiceBtn').onclick=()=>{S.settings.voice=!S.settings.voice;save();syncVoiceBtn();if(S.settings.voice){unlockAudio();say('Voice on')}else hush();toast(S.settings.voice?'Voice prompts on':'Voice prompts off')};
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'){persistActive();Store.flush()}else if(sess)grabWake()});
 window.addEventListener('pagehide',()=>{persistActive();Store.flush()});
 
