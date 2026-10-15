@@ -59,10 +59,19 @@ const OSM=(()=>{
       Store.osmPut(key,ways)}
     return {cell,ways}}
 
+  /* Driving route along real roads through the pins, from the public OSRM router. Returns {g:[[lat,lng]...], km, min}. */
+  async function drivePath(pts){if(pts.length<2)return null;
+    const url=`https://router.project-osrm.org/route/v1/driving/${pts.slice(0,25).map(p=>p[1].toFixed(6)+','+p[0].toFixed(6)).join(';')}?overview=full&geometries=geojson&continue_straight=false`;
+    const ctl=new AbortController(),tm=setTimeout(()=>ctl.abort(),15000);
+    try{const res=await fetch(url,{signal:ctl.signal});if(!res.ok)throw new Error('router '+res.status);const j=await res.json();
+      if(j.code!=='Ok'||!j.routes||!j.routes[0])throw new Error('no route');const r=j.routes[0];
+      return {g:r.geometry.coordinates.map(c=>[+c[1].toFixed(5),+c[0].toFixed(5)]),km:+(r.distance/1000).toFixed(1),min:Math.round(r.duration/60)}}
+    finally{clearTimeout(tm)}}
+
   async function search(q,bounds){const b=bounds;
     const url=`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&countrycodes=ca&q=${encodeURIComponent(q)}&viewbox=${b.getWest()},${b.getNorth()},${b.getEast()},${b.getSouth()}`;
     const res=await fetch(url,{headers:{'Accept-Language':'en'}});if(!res.ok)throw new Error('search '+res.status);
     return (await res.json()).map(x=>({name:x.name||x.display_name.split(',')[0],addr:x.display_name.split(',').slice(1,3).join(',').trim(),ll:[+x.lat,+x.lon]}))}
 
-  return {overpass,features,roads,search,dataInfo,get lastErr(){return lastErr},get lastSource(){return lastSource}};
+  return {overpass,features,roads,search,drivePath,dataInfo,get lastErr(){return lastErr},get lastSource(){return lastSource}};
 })();

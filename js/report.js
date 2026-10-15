@@ -31,7 +31,7 @@ async function buildReport(s,tilesOn=true){
   // map
   const mx=P,my=y,mw=W-2*P,mh=640;
   c.save();rrect(c,mx,my,mw,mh,16);c.clip();c.fillStyle='#E9EEEA';c.fillRect(mx,my,mw,mh);
-  const pts=[...(s.track||[]),...cps.map(p=>p.ll),...flags.map(f=>f.ll)].filter(Boolean);
+  const pts=[...(s.track||[]),...(s.plan||[]),...cps.map(p=>p.ll),...flags.map(f=>f.ll)].filter(Boolean);
   if(pts.length){
     let la0=Math.min(...pts.map(p=>p[0])),la1=Math.max(...pts.map(p=>p[0])),lo0=Math.min(...pts.map(p=>p[1])),lo1=Math.max(...pts.map(p=>p[1]));
     let z=17;for(;z>3;z--){const a=wpx([la1,lo0],z),b=wpx([la0,lo1],z);if(b[0]-a[0]<=mw-120&&b[1]-a[1]<=mh-120)break}
@@ -42,7 +42,7 @@ async function buildReport(s,tilesOn=true){
         jobs.push(loadImg(`https://tile.openstreetmap.org/${z}/${tx}/${ty}.png`).then(im=>c.drawImage(im,mx+tx*256-ox,my+ty*256-oy,256,256)).catch(()=>{}))}
       await Promise.all(jobs)}
     else{c.strokeStyle='#D9E1DB';c.lineWidth=1;for(let gx=mx;gx<mx+mw;gx+=60){c.beginPath();c.moveTo(gx,my);c.lineTo(gx,my+mh);c.stroke()}for(let gy=my;gy<my+mh;gy+=60){c.beginPath();c.moveTo(mx,gy);c.lineTo(mx+mw,gy);c.stroke()}}
-    if(cps.length>1){c.setLineDash([10,10]);c.strokeStyle=RC.caution;c.lineWidth=4;c.beginPath();cps.forEach((p,i)=>{const q=toC(p.ll);i?c.lineTo(...q):c.moveTo(...q)});c.stroke();c.setLineDash([])}
+    const plan=s.plan&&s.plan.length>1?s.plan:cps.length>1?cps.map(p=>p.ll):null;if(plan){c.setLineDash([10,10]);c.strokeStyle=RC.caution;c.lineWidth=4;c.beginPath();plan.forEach((p,i)=>{const q=toC(p);i?c.lineTo(...q):c.moveTo(...q)});c.stroke();c.setLineDash([])}
     if(s.track?.length>1){c.lineJoin=c.lineCap='round';c.strokeStyle='#fff';c.lineWidth=11;c.beginPath();s.track.forEach((p,i)=>{const q=toC(p);i?c.lineTo(...q):c.moveTo(...q)});c.stroke();
       c.strokeStyle=RC.track;c.lineWidth=6;c.stroke();const st0=toC(s.track[0]),en=toC(s.track[s.track.length-1]);
       pinDot(c,...st0,'S',RC.ink,'#fff',13);pinDot(c,...en,'F',RC.ink,'#fff',13)}
@@ -55,7 +55,7 @@ async function buildReport(s,tilesOn=true){
   y=my+mh+30;
   // legend
   c.font=fnt(400,18,'b');let lx=P;
-  [[RC.track,'Route driven'],[RC.ok,'Checkpoint reached'],[RC.caution,'Checkpoint missed'],[RC.stop,'Mistake mark']].forEach(([col,t])=>{c.fillStyle=col;rrect(c,lx,y-14,18,18,4);c.fill();c.fillStyle=RC.muted;c.fillText(t,lx+26,y);lx+=c.measureText(t).width+60});
+  [[RC.track,'Route driven'],[RC.ok,'Checkpoint reached'],[RC.caution,'Planned route / missed pin'],[RC.stop,'Mistake mark']].forEach(([col,t])=>{c.fillStyle=col;rrect(c,lx,y-14,18,18,4);c.fill();c.fillStyle=RC.muted;c.fillText(t,lx+26,y);lx+=c.measureText(t).width+60});
   y+=50;
   const H=t=>{c.fillStyle=RC.sign;c.font=fnt(900,30,'d');c.fillText(t,P,y);y+=14;c.fillStyle=RC.line;c.fillRect(P,y,W-2*P,3);y+=36};
   // mistakes

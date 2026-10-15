@@ -53,8 +53,17 @@ function drawRoute(){
      .bindTooltip(esc(c.name),{direction:'top',offset:[0,-14]}).addTo(cpLayer);
     m.on('dragend',e=>{const p=e.target.getLatLng();c.lat=+p.lat.toFixed(6);c.lng=+p.lng.toFixed(6);save();drawRoute()});
   });
-  if(pts.length>1)L.polyline(pts,{color:isDark()?'#F2C53D':'#B88600',weight:3,dashArray:'6 8'}).addTo(cpLayer);
+  if(pts.length>1){const col=isDark()?'#F2C53D':'#B88600',k=pathKey(pts);
+    if(r.path&&r.path.key===k){L.polyline(r.path.g,{color:'#fff',weight:7,opacity:.7}).addTo(cpLayer);L.polyline(r.path.g,{color:col,weight:4,dashArray:'8 7'}).addTo(cpLayer)}
+    else{L.polyline(pts,{color:col,weight:3,dashArray:'2 8',opacity:.8}).addTo(cpLayer);queuePath(r,pts,k)}}
 }
+/* Road-following path between pins. Fetched once per pin layout and saved with the route, so it also works offline. */
+const pathKey=pts=>pts.map(p=>p[0].toFixed(5)+','+p[1].toFixed(5)).join('|');
+const pathFail=new Map();let pathTimer=null;
+function queuePath(r,pts,k){if(sess)return;if(pathFail.get(k)>Date.now()-120000)return;clearTimeout(pathTimer);
+  pathTimer=setTimeout(async()=>{try{const p=await OSM.drivePath(pts);if(!p)return;r.path={key:k,...p};save();if(route()===r){drawRoute();if(tab==='drive'||tab==='routes')render()}}
+    catch(e){pathFail.set(k,Date.now());if(route()===r&&tab==='routes')toast('Couldn\'t get the road route right now, showing straight lines.')}},700)}
+const pathLine=r=>{const pts=placedCps(r.cps).map(c=>[c.lat,c.lng]);return r.path&&pts.length>1&&r.path.key===pathKey(pts)?`${r.path.km} km by road · about ${r.path.min} min`:''};
 function fitRoute(){const pts=route().cps.filter(c=>c.lat!=null).map(c=>[c.lat,c.lng]);
   if(sess&&sess.track.length)pts.push(...sess.track);
   if(pts.length===1)map.setView(pts[0],16);else if(pts.length)map.fitBounds(pts,{padding:[40,40]});else{map.setView(curArea().c,curArea().z);toast('No pins yet. Place them in Routes.')}}
@@ -158,6 +167,7 @@ function finishSession(keep){
     S.sessions.unshift({id:sess.id,start:sess.start,end:Date.now(),routeId:r.id,routeName:r.name,stage:r.stage,km:+sess.km.toFixed(2),maxKmh:Math.round(sess.maxKmh),
       done:sess.done.length,total:placedCps(r.cps).length,feel:endForm.feel,notes:endForm.notes.trim(),
       track:thinTrack(sess.track).map(p=>[+p[0].toFixed(5),+p[1].toFixed(5)]),flags:sess.flags.map(f=>({ll:f.ll,label:f.label,t:f.t,...(f.auto?{auto:true,limit:f.limit}:{})})),
+      plan:r.path&&r.path.key===pathKey(placedCps(r.cps).map(c=>[c.lat,c.lng]))?thinTrack(r.path.g,600):null,
       cps:r.cps.map((c,i)=>({n:i+1,name:c.name,task:c.task,done:sess.done.includes(c.id),ll:c.lat!=null?[+c.lat.toFixed(5),+c.lng.toFixed(5)]:null})).filter(c=>c.ll)});
     reportView=sess.id;save();Store.flush();toast('Lesson saved to the log')}
   clearInterval(tick);try{wake?.release()}catch(e){}wake=null;sess=null;ending=false;expanded=false;endForm={feel:0,notes:''};
@@ -310,7 +320,7 @@ function renderDrive(){const r=route(),placed=placedCps(r.cps).length;
   return `${pendingResume?resumeCard(pendingResume):''}
      <div class="small muted">Learner: <b>${esc(prof().name)}</b>${S.profiles.length>1?' · switch in the Log tab':''}</div>
      ${coachCard()}${areaBar()}${routeSelect()}
-     <div class="plate"><div class="k">${esc(r.stage)}</div><div class="n">${esc(r.name)}</div><div class="g">${esc(r.goal)}</div></div>
+     <div class="plate"><div class="k">${esc(r.stage)}</div><div class="n">${esc(r.name)}</div><div class="g">${esc(r.goal)}</div>${pathLine(r)?`<div class="g" style="margin-top:6px"><b>${pathLine(r)}</b></div>`:''}</div>
      ${placed?'':`<div class="empty">This route has no pins yet.<br><div class="row" style="justify-content:center;margin-top:10px"><button class="btn primary" id="autoBuild" ${busy?'disabled':''}>${busy?'Searching…':'Auto-build pins nearby'}</button><button class="btn" id="goPlace">Place them myself</button></div></div>`}
      <button class="btn primary big" id="startBtn">Start lesson</button>
      <div class="row">${mapsLink(r)?`<a class="btn" href="${mapsLink(r)}" target="_blank" rel="noopener">Open route in Google Maps</a>`:''}</div>
@@ -355,6 +365,7 @@ function renderRoutes(){const r=route(),n=stageNum(r);
    <div class="row nowrap"><input type="text" id="rStage" value="${esc(r.stage)}" aria-label="Stage" style="max-width:110px"><input type="text" id="rGoal" value="${esc(r.goal)}" aria-label="Goal" placeholder="Goal for this route"></div></div>
    ${n&&n<=6?`<div class="stack"><button class="btn primary big" id="autoBuild" ${busy?'disabled':''}>${busy?'Searching…':'Auto-build pins nearby'}</button><div class="small muted">Finds real ${['','parking lots','stop signs and playgrounds','traffic signals','roundabouts','highway ramps','mixed test spots'][n]} around the centre of the map. Tap Near me first to start from where you are. Replaces this route's pins (you can undo).</div></div>`:''}
    <div class="stack"><div class="row nowrap"><input type="text" id="placeQ" placeholder="Find a place or address" aria-label="Find a place" enterkeyhint="search"><button class="btn" id="placeGo">Find</button></div><div id="placeRes" class="stack">${placeResults.map((p,i)=>`<button class="entry" data-place="${i}"><div class="top"><span>${esc(p.name)}</span></div><div class="meta">${esc(p.addr)}</div></button>`).join('')}</div><div class="small muted">Tap a result to pin the next empty checkpoint there.</div></div>
+   ${pathLine(r)?`<div class="small"><b>Route:</b> ${pathLine(r)} (follows roads; drive time ignores lesson stops)</div>`:''}
    <button class="btn ${placing?'primary':''}" id="placeBtn">${placing?'Done placing pins':'Tap map to place pins'}</button>
    <div class="small muted">Pins can be reached in any order while driving. Drag a pin to fine-tune it.</div>
    ${cpList(r,true)}
