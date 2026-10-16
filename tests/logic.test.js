@@ -169,3 +169,10 @@ test('A to B stop checkpoints keep the stop line position',()=>{
   const cps=L.planDrive({g,steps,nodes:[5]},[{type:'node',id:5,lat:51.0049,lon:-114,tags:{highway:'stop'}}]);
   assert.equal(cps[0].kind,'stop');assert.deepEqual(cps[0].stopAt,[51.0049,-114]);
 });
+
+test('turnarounds are found where a path doubles back',()=>{
+  const out=[[51,-114],[51.001,-114],[51.002,-114],[51.001,-114.00005],[51,-114.00005]];           // north 220 m, then straight back
+  assert.equal(L.uTurns(out).length,1);
+  const corner=[[51,-114],[51.002,-114],[51.002,-113.997]];                                         // a normal right-angle turn
+  assert.equal(L.uTurns(corner).length,0);
+});

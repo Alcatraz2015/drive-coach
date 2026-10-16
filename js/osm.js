@@ -60,8 +60,9 @@ const OSM=(()=>{
     return {cell,ways}}
 
   /* Driving route along real roads through the pins, from the public OSRM router. Returns {g:[[lat,lng]...], km, min}. */
-  async function drivePath(pts){if(pts.length<2)return null;
-    const url=`https://router.project-osrm.org/route/v1/driving/${pts.slice(0,25).map(p=>p[1].toFixed(6)+','+p[0].toFixed(6)).join(';')}?overview=full&geometries=geojson&continue_straight=false`;
+  async function drivePath(pts,mode='auto'){if(pts.length<2)return null;
+    if(mode==='auto')try{return await drivePath(pts,'through')}catch(e){return drivePath(pts,'any')}   // drive through pins; allow turnarounds only if there's no other way
+    const url=`https://router.project-osrm.org/route/v1/driving/${pts.slice(0,25).map(p=>p[1].toFixed(6)+','+p[0].toFixed(6)).join(';')}?overview=full&geometries=geojson&continue_straight=${mode==='through'}`;
     const ctl=new AbortController(),tm=setTimeout(()=>ctl.abort(),15000);
     try{const res=await fetch(url,{signal:ctl.signal});if(!res.ok)throw new Error('router '+res.status);const j=await res.json();
       if(j.code!=='Ok'||!j.routes||!j.routes[0])throw new Error('no route');const r=j.routes[0];
@@ -69,8 +70,9 @@ const OSM=(()=>{
     finally{clearTimeout(tm)}}
 
   /* Fastest driving route A→B with turn-by-turn steps and the OSM node ids it passes (to tell which stop signs and lights are on it). */
-  async function navRoute(a,b){const pts=b?[a,b]:a;
-    const url=`https://router.project-osrm.org/route/v1/driving/${pts.slice(0,25).map(p=>p[1].toFixed(6)+','+p[0].toFixed(6)).join(';')}?overview=full&geometries=geojson&steps=true&annotations=nodes&continue_straight=false`;
+  async function navRoute(a,b,straight){const pts=b?[a,b]:a;
+    if(straight===undefined&&pts.length>2)try{return await navRoute(pts,null,true)}catch(e){return navRoute(pts,null,false)}   // loops: no U-turns at stops if avoidable
+    const url=`https://router.project-osrm.org/route/v1/driving/${pts.slice(0,25).map(p=>p[1].toFixed(6)+','+p[0].toFixed(6)).join(';')}?overview=full&geometries=geojson&steps=true&annotations=nodes&continue_straight=${!!straight}`;
     const ctl=new AbortController(),tm=setTimeout(()=>ctl.abort(),25000);
     try{const res=await fetch(url,{signal:ctl.signal});if(!res.ok)throw new Error('router '+res.status);const j=await res.json();
       if(j.code!=='Ok'||!j.routes||!j.routes[0])throw new Error(j.code==='NoRoute'?'No driving route between those points':'router: '+(j.message||j.code));

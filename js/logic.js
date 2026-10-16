@@ -295,8 +295,15 @@ function pickLoopTargets(cands,start,r,w,n,rnd=Math.random){
 function trackSegments(track,breaks){if(!track||!track.length)return [];const bs=[...(breaks||[])].sort((a,b)=>a-b),out=[];let s=0;
   for(const b of bs){if(b>s&&b<track.length){out.push(track.slice(s,b));s=b}}out.push(track.slice(s));return out.filter(x=>x.length)}
 
+/* Places where a path doubles back on itself (a U-turn): heading flips by 150°+ within ~30 m. */
+function uTurns(g){const out=[];if(!g||g.length<3)return out;
+  for(let i=1;i<g.length-1;i++){let a=i-1,b=i+1;while(a>0&&hav(g[a],g[i])<12)a--;while(b<g.length-1&&hav(g[i],g[b])<12)b++;
+    if(hav(g[a],g[i])<4||hav(g[i],g[b])<4)continue;
+    if(angDiff(bearing(g[a],g[i]),bearing(g[i],g[b]))>=150&&!out.some(o=>hav(o.ll,g[i])<40))out.push({i,ll:g[i]})}
+  return out}
+
 const API={uid,esc,hav,bearing,angDiff,fmtDur,fmtDist,stageNum,median,GPS,acceptFix,smoothSpeed,thinTrack,placedCps,arrivals,nextTarget,skippedCps,
   skillPct,hours,badFlags,mistakeSeries,topMistakes,suggestNext,curfew,testEligibleFrom,parseMaxspeed,inBox,segDist,limitAt,
-  roadAt,playZoneRoad,SAY,speakable,stopCheck,hardBrake,problemSpots,HEADS_UP,focusWeights,pickLoopTargets,trackSegments,LOOP_SKILLS,pathArrows,cumDist,projectOnPath,instruction,maneuvers,planDrive,spotSummary,SPOTS,polyArea,cluster,carLot,parseFeatures,rankLots,lotPins,walkRamp,buildStage};
+  uTurns,roadAt,playZoneRoad,SAY,speakable,stopCheck,hardBrake,problemSpots,HEADS_UP,focusWeights,pickLoopTargets,trackSegments,LOOP_SKILLS,pathArrows,cumDist,projectOnPath,instruction,maneuvers,planDrive,spotSummary,SPOTS,polyArea,cluster,carLot,parseFeatures,rankLots,lotPins,walkRamp,buildStage};
 if(typeof module!=='undefined')module.exports=API;else Object.assign(root,API);
 })(typeof window!=='undefined'?window:globalThis);

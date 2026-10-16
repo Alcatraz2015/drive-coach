@@ -61,7 +61,8 @@ function drawRoute(){
     m.on('dragend',e=>{const p=e.target.getLatLng();c.lat=+p.lat.toFixed(6);c.lng=+p.lng.toFixed(6);save();drawRoute()});
   });
   if(pts.length>1){const col=isDark()?'#F2C53D':'#B88600',k=pathKey(pts);
-    if(r.path&&r.path.key===k){L.polyline(r.path.g,{color:'#fff',weight:7,opacity:.7}).addTo(cpLayer);L.polyline(r.path.g,{color:col,weight:4,dashArray:'8 7'}).addTo(cpLayer);drawArrows(r.path.g)}
+    if(r.path&&r.path.key===k){L.polyline(r.path.g,{color:'#fff',weight:7,opacity:.7}).addTo(cpLayer);L.polyline(r.path.g,{color:col,weight:4,dashArray:'8 7'}).addTo(cpLayer);drawArrows(r.path.g);
+      if(!r.nav)uTurns(r.path.g).forEach(u=>L.marker(u.ll,{icon:L.divIcon({className:'',iconSize:[28,28],iconAnchor:[14,14],html:'<div class="uturn" title="Turnaround">↶</div>'}),interactive:false}).addTo(cpLayer))}
     else{L.polyline(pts,{color:col,weight:3,dashArray:'2 8',opacity:.8}).addTo(cpLayer);queuePath(r,pts,k)}}
 }
 /* Direction arrows along the road path; spacing follows the zoom so they stay readable. */
@@ -72,11 +73,14 @@ function drawArrows(g){arrowPath=g;if(!arrowLayer)arrowLayer=L.layerGroup().addT
   const pins=placedCps(route().cps).map(c=>[c.lat,c.lng]),clear=Math.max(25,step*0.25);
   pathArrows(g,step).filter(a=>pins.every(p=>hav(p,a.ll)>clear)).slice(0,300).forEach(a=>L.marker(a.ll,{icon:arrowIcon(a.deg),interactive:false,keyboard:false}).addTo(arrowLayer))}
 /* Road-following path between pins. Fetched once per pin layout and saved with the route, so it also works offline. */
-const pathKey=pts=>pts.map(p=>p[0].toFixed(5)+','+p[1].toFixed(5)).join('|');
+const pathKey=pts=>'v2|'+pts.map(p=>p[0].toFixed(5)+','+p[1].toFixed(5)).join('|');
 const pathFail=new Map();let pathTimer=null;
 function queuePath(r,pts,k){if(sess)return;if(pathFail.get(k)>Date.now()-120000)return;clearTimeout(pathTimer);
   pathTimer=setTimeout(async()=>{try{const p=await OSM.drivePath(pts);if(!p)return;r.path={key:k,...p};save();if(route()===r){drawRoute();if(tab==='drive'||tab==='routes')render()}}
     catch(e){pathFail.set(k,Date.now());if(route()===r&&tab==='routes')toast('Couldn\'t get the road route right now, showing straight lines.')}},700)}
+function turnaroundNote(r){const pts=placedCps(r.cps).map(c=>[c.lat,c.lng]);if(r.nav||!r.path||r.path.key!==pathKey(pts))return '';const us=uTurns(r.path.g);if(!us.length)return '';
+  const near=us.map(u=>{let bi=0,bd=1e9;placedCps(r.cps).forEach((c,i)=>{const d=hav(u.ll,[c.lat,c.lng]);if(d<bd){bd=d;bi=i}});return bi+1});
+  return `<div class="card warn small"><b>${us.length===1?'This route has a turnaround':'This route has '+us.length+' turnarounds'} (↶ on the map)</b> near pin ${[...new Set(near)].join(', ')}. That usually means a pin sits on a side street or dead end. Drag it onto the street she'll drive through, or change the order with ↑ ↓.</div>`}
 const pathLine=r=>{const pts=placedCps(r.cps).map(c=>[c.lat,c.lng]);return r.path&&pts.length>1&&r.path.key===pathKey(pts)?`${r.path.km} km by road · about ${r.path.min} min`:''};
 function fitRoute(){const pts=route().cps.filter(c=>c.lat!=null).map(c=>[c.lat,c.lng]);
   if(sess&&sess.track.length)pts.push(...sess.track);
@@ -533,7 +537,7 @@ function renderRoutes(){const r=route(),n=stageNum(r),pins=placedCps(r.cps);
     <div id="placeRes" class="stack">${placeResults.map((p,i)=>`<button class="entry" data-place="${i}"><div class="top"><span>${esc(p.name)}</span></div><div class="meta">${esc(p.addr)}</div></button>`).join('')}</div>
     <button class="btn ${placing?'primary':''}" id="placeBtn">${placing?'Done tapping the map':'Tap the map to add pins'}</button>
     ${areaBar()}</div>
-   <div class="card"><div class="row" style="justify-content:space-between"><h3>Pins · ${pins.length}</h3>${pins.length?'<button class="btn small danger" id="clearPins">Clear route</button>':''}</div>
+   ${turnaroundNote(r)}<div class="card"><div class="row" style="justify-content:space-between"><h3>Pins · ${pins.length}</h3>${pins.length?'<button class="btn small danger" id="clearPins">Clear route</button>':''}</div>
     ${r.cps.length?`<div class="small muted">Tap a name to see it on the map. Drag a pin on the map to move it. ✕ removes it.</div>${pinList(r)}`
       :`<div class="empty">No pins yet. Use Auto-build, search, or tap the map.</div>`}</div>
    <details class="settings"><summary>Route details</summary><div class="stack" style="margin-top:8px">
