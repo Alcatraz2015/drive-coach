@@ -213,3 +213,31 @@ test('out-and-back stretches are found and split to the right of travel',()=>{
   // screen coords: heading east (+x) the right-hand side is +y (screen y points down)
   assert.deepEqual(L.offsetPoints([[0,0],[10,0],[20,0]],[0,5,0]),[[0,0],[10,5],[20,0]]);
 });
+
+test('night map style recolours ground, roads and labels',()=>{
+  const fs=require('fs'),{nightStyle,NIGHT}=require('../js/mapstyle.js');
+  let base;try{base=JSON.parse(fs.readFileSync('/tmp/claude-0/liberty.json','utf8'))}catch(e){base={layers:[
+    {id:'background',type:'background',paint:{'background-color':'#f8f4f0'}},{id:'road_minor',type:'line','source-layer':'transportation',paint:{'line-color':'#fff'}},
+    {id:'road_motorway',type:'line','source-layer':'transportation',paint:{'line-color':'#fc8'}},{id:'label_city',type:'symbol',layout:{'text-field':'{name}'},paint:{'text-color':'#000'}}]}}
+  const n=nightStyle(base),by=id=>n.layers.find(l=>l.id===id);
+  assert.equal(by('background').paint['background-color'],NIGHT.ground);
+  assert.equal(by('road_minor').paint['line-color'],NIGHT.minor);
+  assert.equal(by('road_motorway').paint['line-color'],NIGHT.motorway);
+  assert.equal(by('label_city').paint['text-color'],NIGHT.label);
+  assert.ok(!n.layers.some(l=>l.type==='line'&&l['source-layer']==='transportation'&&/^#fff/i.test(String(l.paint['line-color']))));
+});
+
+test('planDrive numbers spots in driving order on an out-and-back road', () => {
+  const out = [], back = [];
+  for (let i = 0; i <= 10; i++) out.push([+(51 + i * 0.001).toFixed(4), -114]);
+  for (let i = 9; i >= 0; i--) back.push([+(51 + i * 0.001).toFixed(4), -114]);
+  const g = [...out, ...back], nodes = g.map((_, i) => 100 + i);
+  const steps = [{ type: 'depart', loc: g[0] },
+    { type: 'turn', modifier: 'uturn', name: 'Back St', loc: g[10] },
+    { type: 'turn', modifier: 'right', name: 'Home Rd', loc: back[7] },   // on the way back, at 51.002
+    { type: 'arrive', loc: g[g.length - 1] }];
+  // a stop sign at 51.004 that the route only meets on the return leg (its node is late in the list)
+  const els = [{ type: 'node', id: 100 + 16, lat: 51.004, lon: -114, tags: { highway: 'stop' } }];
+  const cps = L.planDrive({ g, steps, nodes }, els);
+  assert.deepEqual(cps.map(c => c.kind), ['uturn', 'stop', 'right', 'dest']);
+});

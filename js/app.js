@@ -13,7 +13,7 @@ function seed(){
 function migrate(x){
   if(!x.profiles){x.profiles=[{id:'p1',name:'Learner',since:'',testDate:'',goalHours:''}];x.profileId='p1';x.pdata={}}
   x.sessions=x.sessions||[];x.skills=x.skills||{};x.pdata=x.pdata||{};
-  x.settings=Object.assign({voice:true,speedAlerts:true,autoSpeedMarks:true,checklist:true,autoChecks:true,spotWarnings:true},x.settings||{});
+  x.settings=Object.assign({mapTheme:'auto',voice:true,speedAlerts:true,autoSpeedMarks:true,checklist:true,autoChecks:true,spotWarnings:true},x.settings||{});
   x.places=x.places||[];x.userStops=x.userStops||[];
   if(x.onboarded==null)x.onboarded=true;
   // Every stage route 1-6 must exist; bring back any that were deleted (empty, ready for pins).
@@ -45,16 +45,24 @@ const VSTYLE={light:'https://tiles.openfreemap.org/styles/liberty',dark:'https:/
 const VATTR='<a href="https://openfreemap.org" target="_blank">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org/" target="_blank">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>';
 let baseLayer=null,baseVector=false,vectorFailed=false;
 function webgl(){try{const c=document.createElement('canvas');return !!(c.getContext('webgl2')||c.getContext('webgl'))}catch(e){return false}}
-function addBaseMap(){const want=isDark()?'dark':'light';
+const mapDark=()=>{const m=S&&S.settings.mapTheme;return m==='dark'?true:m==='light'?false:isDark()};
+let nightP=null;const nightStyleObj=()=>nightP=nightP||fetch(VSTYLE.light).then(r=>r.json()).then(nightStyle).catch(e=>{nightP=null;throw e});
+function addBaseMap(){const want=mapDark()?'dark':'light';
   if(baseLayer&&baseVector&&baseLayer._dcStyle===want)return;
-  if(baseLayer){map.removeLayer(baseLayer);baseLayer=null}
-  if(!vectorFailed&&L.maplibreGL&&window.maplibregl&&webgl()){try{
-      baseLayer=L.maplibreGL({style:VSTYLE[want],attribution:VATTR,interactive:false}).addTo(map);baseLayer._dcStyle=want;baseVector=true;
-      document.getElementById('map').classList.remove('darkmap');
-      const gl=baseLayer.getMaplibreMap();let ok=false;gl.once('load',()=>{ok=true;if(route().path)preloadPath(route().path.g)});
-      setTimeout(()=>{if(!ok){vectorFailed=true;addBaseMap();toast('Using the backup map (vector map didn\'t load)')}},10000);return}catch(e){vectorFailed=true}}
+  if(!vectorFailed&&L.maplibreGL&&window.maplibregl&&webgl()){
+    if(want==='dark')return nightStyleObj().then(st=>showVector(st,want)).catch(()=>showVector(VSTYLE.dark,want));
+    return showVector(VSTYLE.light,want)}
+  showRaster()}
+function showVector(style,want){if((mapDark()?'dark':'light')!==want)return;
+  try{if(baseLayer){map.removeLayer(baseLayer);baseLayer=null}
+    baseLayer=L.maplibreGL({style,attribution:VATTR,interactive:false}).addTo(map);baseLayer._dcStyle=want;baseVector=true;
+    document.getElementById('map').classList.remove('darkmap');
+    const gl=baseLayer.getMaplibreMap();let ok=false;gl.once('load',()=>{ok=true;if(route().path)preloadPath(route().path.g)});
+    setTimeout(()=>{if(!ok&&baseLayer&&baseLayer._dcStyle===want){vectorFailed=true;showRaster();toast('Using the backup map (vector map didn\'t load)')}},10000)}
+  catch(e){vectorFailed=true;showRaster()}}
+function showRaster(){if(baseLayer){map.removeLayer(baseLayer);baseLayer=null}
   baseVector=false;baseLayer=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,keepBuffer:3,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(map);
-  document.getElementById('map').classList.toggle('darkmap',isDark())}
+  document.getElementById('map').classList.toggle('darkmap',mapDark())}
 /* Download the vector map along a route ahead of time (z12–14, ±400 m corridor, max 600 tiles, 4 at a time). Within OpenFreeMap's offline limits. */
 let tileJsonP=null;const preloaded=new Set();
 async function preloadPath(g){if(!baseVector||!g||g.length<2)return;const key=g.length+':'+g[0]+':'+g[g.length-1];if(preloaded.has(key))return;preloaded.add(key);
@@ -119,7 +127,7 @@ function drawPathLines(g){curPathG=g;if(!pathLayer)pathLayer=L.layerGroup().addT
   const mags=mask.map((m,i)=>m?OFF:(mask[i-1]||mask[i+1])?OFF/2:0);let g2=g;
   if(mags.some(Boolean)){const pts=g.map(p=>{const q=map.latLngToLayerPoint(p);return [q.x,q.y]});
     g2=offsetPoints(pts,mags).map(q=>{const ll=map.layerPointToLatLng(L.point(q[0],q[1]));return [ll.lat,ll.lng]})}
-  const col=isDark()?'#F2C53D':'#B88600';
+  const col=mapDark()?'#F2C53D':'#B88600';
   L.polyline(g2,{color:'#fff',weight:7,opacity:.7,interactive:false}).addTo(pathLayer);L.polyline(g2,{color:col,weight:4,dashArray:'8 7',interactive:false}).addTo(pathLayer);
   drawArrows(g2)}
 
@@ -468,6 +476,7 @@ function cpList(r){const skipped=sess?skippedCps(r.cps,sess.done).map(c=>c.id):[
 
 function settingsBlock(){const t=(id,label,on,sub='')=>`<label class="toggle"><span>${label}${sub?`<br><span class="small muted">${sub}</span>`:''}</span><input type="checkbox" id="${id}" ${on?'checked':''}></label>`;
   return `<details class="settings"><summary>Lesson settings</summary><div>
+    <div class="toggle"><span>Map style</span><span class="chips">${['auto','light','dark'].map(m=>`<button class="chip" data-maptheme="${m}" aria-pressed="${S.settings.mapTheme===m}">${{auto:'Auto',light:'Light',dark:'Dark'}[m]}</button>`).join('')}</span></div>
     ${t('setVoice','Voice prompts',S.settings.voice,'Reads out the next checkpoint and its task')}
     ${t('setSpeed','Speed limit warnings',S.settings.speedAlerts,'Beeps and says the limit when 6+ km/h over')}
     ${t('setAutoMark','Auto-mark speeding',S.settings.autoSpeedMarks,'Adds "Too fast" to the report, once a minute at most')}
@@ -694,6 +703,7 @@ function confirmTap(t,label){if(t.dataset.sure)return true;t.dataset.sure=1;t.te
 pane.addEventListener('click',async e=>{const pt=e.target.closest('[data-pt]');if(pt){chartSel=+pt.dataset.pt===chartSel?null:+pt.dataset.pt;return render()}
   const t=e.target.closest('button');if(!t)return;const r=route(),d=t.dataset,id=t.id;
   // lesson
+  if(d.maptheme){S.settings.mapTheme=d.maptheme;save();addBaseMap();drawRoute();return render()}
   if(d.pm){planMode=d.pm;destResults=[];return render()}
   if(d.loopmin){loopMin=+d.loopmin;return render()}
   if(d.testmin){testMin=+d.testmin;return render()}

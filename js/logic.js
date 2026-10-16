@@ -177,10 +177,11 @@ function pathArrows(g,step){const out=[];if(!g||g.length<2)return out;let carry=
 /* Cumulative distance (m) at each vertex of a path. */
 function cumDist(g){const c=[0];for(let i=1;i<g.length;i++)c.push(c[i-1]+hav(g[i-1],g[i]));return c}
 /* Closest point on the path to ll: {i (segment), along (m from start), off (m from path)}. hint = last segment index, searched first. */
-function projectOnPath(g,cum,ll,hint){let best=null;
+function projectOnPath(g,cum,ll,hint,only){let best=null;
   const scan=(a,b)=>{for(let i=Math.max(0,a);i<Math.min(g.length-1,b);i++){const p=g[i],q=g[i+1],k=Math.cos(ll[0]*RAD),
       ax=(p[1]-ll[1])*k,ay=p[0]-ll[0],bx=(q[1]-ll[1])*k,by=q[0]-ll[0],dx=bx-ax,dy=by-ay,L2=dx*dx+dy*dy,t=L2?Math.max(0,Math.min(1,-(ax*dx+ay*dy)/L2)):0,
       off=Math.hypot(ax+t*dx,ay+t*dy)*111320;if(!best||off<best.off)best={i,off,along:cum[i]+t*(cum[i+1]-cum[i])}}};
+  if(only!=null){scan(only,only+1);return best}
   if(hint!=null){scan(hint-3,hint+60);if(best&&best.off<40)return best}
   scan(0,g.length);return best}
 const ORD=n=>n+(['th','st','nd','rd'][(n%100>10&&n%100<14)?0:Math.min(n%10,4)%4]||'th');
@@ -199,8 +200,9 @@ const NAV_TYPES=new Set(['turn','end of road','fork','merge','on ramp','off ramp
 const navIcon=st=>{const m=st.modifier||'';if(st.type==='arrive')return '◎';if(/roundabout|rotary/.test(st.type))return '⟳';if(m==='uturn')return '↶';
   if(m.includes('left'))return m.includes('slight')?'↖':'↰';if(m.includes('right'))return m.includes('slight')?'↗':'↱';return '↑'};
 /* Maneuvers to announce, with their distance along the path. */
-function maneuvers(steps,g,cum){return steps.filter(st=>NAV_TYPES.has(st.type)&&!(st.type==='turn'&&st.modifier==='straight'))
-  .map(st=>({along:projectOnPath(g,cum,st.loc).along,ll:st.loc,text:instruction(st),icon:navIcon(st)}))}
+function maneuvers(steps,g,cum){let lastI=0;return steps.filter(st=>NAV_TYPES.has(st.type)&&!(st.type==='turn'&&st.modifier==='straight'))
+  .map(st=>{const ps=pathPasses(g,cum,st.loc),p=ps.find(x=>x.i>=lastI-1)||ps[ps.length-1]||projectOnPath(g,cum,st.loc);lastI=p.i;
+    return {along:p.along,ll:st.loc,text:instruction(st),icon:navIcon(st)}})}
 
 const SPOTS={
   stop:['Stop sign','Full stop behind the line, count 2, look left, right, left.'],
@@ -221,16 +223,27 @@ const SAY={stop:'Stop sign ahead. Full stop at the line.',allway:'Four-way stop 
   left:'Left turn ahead.',right:'Right turn ahead.',uturn:'U-turn ahead.',roundabout:'Roundabout ahead.',merge:'Highway merge ahead.',exit:'Highway exit ahead.',dest:'You have arrived.'};
 /* Turn a planned drive into checkpoints, in driving order.
    nav = {g, steps:[{type,modifier,exit,name,loc}], nodes:[OSM node ids on the route]}; els = OSM elements near the path. */
+/* Every time the path passes within maxOff metres of ll: the closest point of each pass, in driving order.
+   A road driven out and back gives two passes, so a spot can be placed on the pass it really belongs to. */
+function pathPasses(g,cum,ll,maxOff=30){const out=[];let run=null;
+  for(let i=0;i<g.length-1;i++){const p=projectOnPath(g,cum,ll,null,i);
+    if(p.off<=maxOff){if(!run||p.off<run.off)run=p}else if(run){out.push(run);run=null}}
+  if(run)out.push(run);return out}
 function planDrive(nav,els,mkId=uid){
-  const g=nav.g,cum=cumDist(g),onRoute=new Set((nav.nodes||[]).map(String)),items=[];
+  const g=nav.g,cum=cumDist(g),nodes=(nav.nodes||[]).map(String),onRoute=new Set(nodes),items=[];
+  const pick=(ll,want)=>{const ps=pathPasses(g,cum,ll);if(!ps.length)return projectOnPath(g,cum,ll);
+    if(want==null)return ps[0];return ps.reduce((a,b)=>Math.abs(b.i-want)<Math.abs(a.i-want)?b:a)};
+  let lastI=0;   // turns come from the router in driving order: each one is placed after the previous
   nav.steps.forEach((st,i)=>{if(i===0||st.type==='depart'||st.type==='arrive')return;const m=st.modifier||'';let k=null;
     if(/roundabout|rotary/.test(st.type)&&st.type!=='exit roundabout')k='roundabout';
     else if(st.type==='merge'||st.type==='on ramp')k='merge';else if(st.type==='off ramp')k='exit';
     else if(st.type==='turn'||st.type==='end of road'){if(m==='uturn')k='uturn';else if(m==='left'||m==='sharp left')k='left';else if(m==='right'||m==='sharp right')k='right'}
-    if(k)items.push({k,ll:st.loc,street:st.name||'',along:projectOnPath(g,cum,st.loc).along})});
+    if(!k)return;const ps=pathPasses(g,cum,st.loc),p=ps.find(x=>x.i>=lastI-1)||ps[ps.length-1]||projectOnPath(g,cum,st.loc);lastI=p.i;
+    items.push({k,ll:st.loc,street:st.name||'',along:p.along})});
   for(const e of els){const t=e.tags||{};if(e.type!=='node')continue;const ll=[e.lat,e.lon];
-    if((t.highway==='stop'||t.highway==='traffic_signals')&&(onRoute.has(String(e.id))||t.user&&(projectOnPath(g,cum,ll)||{}).off<=15)){const p=projectOnPath(g,cum,ll);items.push({k:t.highway==='traffic_signals'?'signals':t.stop==='all'?'allway':'stop',ll,street:'',along:p.along})}
-    else if(t.leisure==='playground'){const p=projectOnPath(g,cum,ll);if(p&&p.off<=100)items.push({k:'play',ll:g[p.i],street:'',along:p.along})}}
+    if((t.highway==='stop'||t.highway==='traffic_signals')&&(onRoute.has(String(e.id))||t.user&&(projectOnPath(g,cum,ll)||{}).off<=15)){
+      const ni=nodes.indexOf(String(e.id)),p=pick(ll,ni>=0&&nodes.length>1?ni/(nodes.length-1)*(g.length-1):null);items.push({k:t.highway==='traffic_signals'?'signals':t.stop==='all'?'allway':'stop',ll,street:'',along:p.along})}
+    else if(t.leisure==='playground'){const ps=pathPasses(g,cum,ll,100),p=ps[0];if(p)items.push({k:'play',ll:g[p.i],street:'',along:p.along})}}
   items.sort((a,b)=>a.along-b.along);
   // merge spots at the same place: a turn plus the stop/lights it happens at becomes one checkpoint
   const out=[];for(const it of items){const prev=out[out.length-1];
