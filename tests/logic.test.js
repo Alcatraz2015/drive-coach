@@ -176,3 +176,16 @@ test('turnarounds are found where a path doubles back',()=>{
   const corner=[[51,-114],[51.002,-114],[51.002,-113.997]];                                         // a normal right-angle turn
   assert.equal(L.uTurns(corner).length,0);
 });
+
+test('no "she" or "her" anywhere in the app text',()=>{
+  const fs=require('fs'),path=require('path');
+  for(const f of ['js/data.js','js/app.js','js/logic.js','js/report.js','index.html']){
+    const t=fs.readFileSync(path.join(__dirname,'..',f),'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm,'');
+    const m=t.match(/\b(she|her|hers|herself)\b/i);assert.equal(m,null,`${f}: "${m&&t.slice(Math.max(0,m.index-30),m.index+30)}"`)}
+});
+test('user-added stop signs count when the route passes within 15 m',()=>{
+  const g=[[51,-114],[51.005,-114],[51.005,-113.99]];
+  const steps=[{type:'depart',loc:g[0]},{type:'arrive',loc:g[2]}];
+  const els=[{type:'node',id:'u1',lat:51.0025,lon:-114.0001,tags:{highway:'stop',user:true}},{type:'node',id:'u2',lat:51.0025,lon:-114.003,tags:{highway:'stop',user:true}}];
+  const cps=L.planDrive({g,steps,nodes:[]},els);assert.equal(cps.filter(c=>c.kind==='stop').length,1);
+});

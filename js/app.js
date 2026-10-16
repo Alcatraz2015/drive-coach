@@ -14,7 +14,7 @@ function migrate(x){
   if(!x.profiles){x.profiles=[{id:'p1',name:'Learner',since:'',testDate:'',goalHours:''}];x.profileId='p1';x.pdata={}}
   x.sessions=x.sessions||[];x.skills=x.skills||{};x.pdata=x.pdata||{};
   x.settings=Object.assign({voice:true,speedAlerts:true,autoSpeedMarks:true,checklist:true,autoChecks:true,spotWarnings:true},x.settings||{});
-  x.places=x.places||[];
+  x.places=x.places||[];x.userStops=x.userStops||[];
   if(x.onboarded==null)x.onboarded=true;
   // Every stage route 1-6 must exist; bring back any that were deleted (empty, ready for pins).
   TEMPLATES.forEach((t,i)=>{if(!x.routes.some(r=>stageNum(r)===i+1))x.routes.push({id:uid(),name:t.name,stage:t.stage,goal:t.goal,cps:[]})});
@@ -80,7 +80,7 @@ function queuePath(r,pts,k){if(sess)return;if(pathFail.get(k)>Date.now()-120000)
     catch(e){pathFail.set(k,Date.now());if(route()===r&&tab==='routes')toast('Couldn\'t get the road route right now, showing straight lines.')}},700)}
 function turnaroundNote(r){const pts=placedCps(r.cps).map(c=>[c.lat,c.lng]);if(r.nav||!r.path||r.path.key!==pathKey(pts))return '';const us=uTurns(r.path.g);if(!us.length)return '';
   const near=us.map(u=>{let bi=0,bd=1e9;placedCps(r.cps).forEach((c,i)=>{const d=hav(u.ll,[c.lat,c.lng]);if(d<bd){bd=d;bi=i}});return bi+1});
-  return `<div class="card warn small"><b>${us.length===1?'This route has a turnaround':'This route has '+us.length+' turnarounds'} (↶ on the map)</b> near pin ${[...new Set(near)].join(', ')}. That usually means a pin sits on a side street or dead end. Drag it onto the street she'll drive through, or change the order with ↑ ↓.</div>`}
+  return `<div class="card warn small"><b>${us.length===1?'This route has a turnaround':'This route has '+us.length+' turnarounds'} (↶ on the map)</b> near pin ${[...new Set(near)].join(', ')}. That usually means a pin sits on a side street or dead end. Drag it onto the street you'll drive through, or change the order with ↑ ↓.</div>`}
 const pathLine=r=>{const pts=placedCps(r.cps).map(c=>[c.lat,c.lng]);return r.path&&pts.length>1&&r.path.key===pathKey(pts)?`${r.path.km} km by road · about ${r.path.min} min`:''};
 function fitRoute(){const pts=route().cps.filter(c=>c.lat!=null).map(c=>[c.lat,c.lng]);
   if(sess&&sess.track.length)pts.push(...sess.track);
@@ -182,7 +182,8 @@ const DRIVE_ID='driveto';
 async function myPosition(){if(lastFix&&Date.now()-lastFix.t<60000)return lastFix.ll;
   return new Promise(res=>{if(!navigator.geolocation)return res(null);navigator.geolocation.getCurrentPosition(p=>res([p.coords.latitude,p.coords.longitude]),()=>res(null),{enableHighAccuracy:true,timeout:10000})})}
 /* Plan a drive through points [A, ...stops, B]; returns nav (path + maneuvers) and checkpoints. */
-async function buildNav(points){const nav=await OSM.navRoute(points),raw=await OSM.alongPath(nav.g),cum=cumDist(nav.g),els=[];
+const userStopEls=()=>S.userStops.map(u=>({type:'node',id:'u'+u.id,lat:u.ll[0],lon:u.ll[1],tags:{highway:'stop',user:true}}));
+async function buildNav(points){const nav=await OSM.navRoute(points),raw=[...await OSM.alongPath(nav.g),...userStopEls()],cum=cumDist(nav.g),els=[];
   for(const e of raw){if((e.tags||{}).leisure!=='playground'){els.push(e);continue}
     const p=projectOnPath(nav.g,cum,[e.lat,e.lon]);if(!p||p.off>100)continue;const at=nav.g[p.i];
     try{const {ways}=await OSM.roads(at);if(playZoneRoad((roadAt(ways,at,null)||{}).tags))els.push(e)}catch(err){}}
@@ -220,13 +221,13 @@ async function reroute(ll){const r=route();if(!r.dest)return;say('Rerouting.',{p
     navState.hint=null;navState.said={};navState.next=nav.man[0]?{m:nav.man[0],dist:nav.man[0].along}:null;save();drawRoute();render();persistActive();
     const m=nav.man[0];toast(`New route: ${nav.km} km, about ${nav.min} min`);if(m)say(m.text+'.',{prio:2})}
   catch(e){toast('Off the route and couldn\'t re-plan. Follow the map back to the yellow line.',{ms:6000})}}
-/* Practice loop from start: visits spots matching her weakest skills (or road-test items) and comes back. */
+/* Practice loop from start: visits spots matching the weakest skills (or road-test items) and comes back. */
 const LOOP_ID='loop',TEST_ID='roadtest';
 const KIND_LABEL={round:'roundabouts',signals:'lights and left turns',stop:'stop signs',play:'playground zones',ramp:'highway merges'};
 function focusLine(mode,minutes){const w=focusWeights(S.skills,mode);if(minutes<30||w.ramp<2.5)w.ramp=0;return Object.entries(w).filter(([k,v])=>v>0&&KIND_LABEL[k]).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k])=>KIND_LABEL[k]).join(', ')}
 async function planLoop({start,startName,minutes,mode}){if(sess)return toast('End the lesson first');if(planning)return;planning=true;render();toast(mode==='test'?'Building a road test loop…':'Building a practice loop…',{ms:20000});
   try{if(!start){start=await myPosition();startName='where you are';if(!start){const c=map.getCenter();start=[c.lat,c.lng];startName='the map centre';toast('No GPS fix, so the loop starts from the map centre')}}
-    const R=Math.max(600,minutes*60),w=focusWeights(S.skills,mode),F=await OSM.features(['stop','signals','round','play'],start);
+    const R=Math.max(600,minutes*60),w=focusWeights(S.skills,mode),F=await OSM.features(['stop','signals','round','play'],start);S.userStops.forEach(u=>F.stop.push({ll:u.ll,g:[u.ll]}));
     const cands=[...F.round.map(f=>({kind:'round',ll:f.ll})),...F.signals.map(f=>({kind:'signals',ll:f.ll})),...F.stop.map(f=>({kind:'stop',ll:f.ll})),...F.play.map(f=>({kind:'play',ll:f.ll}))];
     let targets=pickLoopTargets(cands,start,R,w,Math.max(2,Math.min(6,Math.round(minutes/7))));
     if(mode!=='test'&&minutes>=30&&w.ramp>=2.5){try{const wr=walkRamp(await OSM.features(['ramp'],start),start);
@@ -310,7 +311,7 @@ function profStats(p){const hrs=S.sessions.reduce((a,s)=>a+hours(s),0);
   const days=p.testDate?Math.ceil((new Date(p.testDate+'T12:00')-Date.now())/864e5):null;return{hrs,pct:skillPct(S.skills),days,n:S.sessions.length}}
 const fmtDate=d=>d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
 function eligibilityLine(p){const el=testEligibleFrom(p.since);if(!el)return '';
-  if(p.testDate&&new Date(p.testDate+'T12:00')<el)return `<div class="small"><b>Heads up:</b> the road test date is before ${fmtDate(el)}, when she'll have held Class 7 for a year.</div>`;
+  if(p.testDate&&new Date(p.testDate+'T12:00')<el)return `<div class="small"><b>Heads up:</b> the road test date is before ${fmtDate(el)}, after one year on Class 7.</div>`;
   return el<=new Date()?'<div class="g">Eligible for the Class 5 road test (1 year on Class 7 done)</div>':`<div class="g">Road test eligible from ${fmtDate(el)}</div>`}
 let editingProfile=false;
 function profileCard(){const p=prof(),st=profStats(p),goal=+p.goalHours||0;
@@ -351,7 +352,7 @@ const NEED={1:['lot'],2:['stop','play'],3:['signals'],4:['round'],5:['ramp'],6:[
 async function autoBuild(){const r=route(),n=stageNum(r);
   if(!n||n>6)return toast('Auto-build works on the 6 stage routes. Use search or tap the map for custom routes.');
   if(busy)return;const c=map.getCenter(),s=[c.lat,c.lng];busy=true;render();toast('Finding spots near the map centre…');
-  try{const F=await OSM.features(NEED[n],s);
+  try{const F=await OSM.features(NEED[n],s);if(NEED[n].includes('stop'))S.userStops.forEach(u=>{if(hav(s,u.ll)<2500)F.stop.push({ll:u.ll,g:[u.ll],name:''})});
     if(n===1||n===6){const lots=rankLots(F,s);if(lots.length){busy=false;return showLotPicker({n,F,s,lots,routeId:r.id})}}
     applyBuild(r,buildStage(n,F,s,null))}
   catch(e){toast(OSM.lastErr?`This spot is outside the saved Calgary-area map data, and the live OpenStreetMap servers didn't answer (${OSM.lastErr}). Try again later, or use search or tap the map.`:'Something went wrong reading the map data: '+e.message,{ms:8000})}
@@ -394,7 +395,7 @@ const BIG_OFF='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke
 function renderMini(){if(!sess||ending)return `<button class="btn primary" id="miniBack">Show the panel</button>`;
   const r=route();return `${r.nav?navBanner():''}<div class="row nowrap" style="gap:10px"><div class="spd" id="hSpd" style="min-width:70px"><b id="hSpeed" style="font-size:34px">0</b><span>km/h</span></div>
    <div class="limit" id="hLimit" hidden style="width:46px;height:46px;font-size:18px;border-width:5px"></div><div class="dmeta grow" id="hMeta" style="text-align:left"></div><button class="btn" id="miniBack">Panel</button></div>
-   <div class="markrow" role="group" aria-label="Mark a moment">${Object.keys(FLAGS).map(t=>`<button class="chip ${FLAGS[t].good?'good':''}" data-flag="${esc(t)}">${t}</button>`).join('')}</div>`}
+   <div class="markrow" role="group" aria-label="Mark a moment">${Object.keys(FLAGS).map(t=>`<button class="chip ${FLAGS[t].good?'good':''}" data-flag="${esc(t)}">${t}</button>`).join('')}<button class="chip addstop" id="addStop">+ Stop sign</button></div>`}
 
 /* ---------- views ---------- */
 let tab='drive',logFilter='all',chartSel=null;
@@ -413,7 +414,7 @@ function settingsBlock(){const t=(id,label,on,sub='')=>`<label class="toggle"><s
     ${t('setSpeed','Speed limit warnings',S.settings.speedAlerts,'Beeps and says the limit when 6+ km/h over')}
     ${t('setAutoMark','Auto-mark speeding',S.settings.autoSpeedMarks,'Adds "Too fast" to the report, once a minute at most')}
     ${t('setAutoChecks','Auto-detect rolling stops and hard braking',S.settings.autoChecks,'Marks them on the report by itself')}
-    ${t('setSpots','Problem spot heads-up',S.settings.spotWarnings,'Voice warning near places she made the same mistake before')}
+    ${t('setSpots','Problem spot heads-up',S.settings.spotWarnings,'Voice warning near places where the same mistake happened before')}
     ${t('setChecklist','Pre-drive checklist',S.settings.checklist,'Alberta Class 7 reminders before each lesson')}</div></details>`}
 
 function renderOnboard(){const p=prof();
@@ -440,7 +441,7 @@ function coachCard(){const sug=suggestNext(S.routes,S.sessions,S.skills),top=top
 
 function renderPrestart(){const late=curfew(new Date());
   return `<h2>Before you go</h2>
-   ${late?`<div class="card alert"><b>Class 7 learners can't drive between midnight and 5 a.m.</b><div class="small">Alberta graduated licensing rule. Start anyway only if she now holds a licence without this restriction.</div></div>`:''}
+   ${late?`<div class="card alert"><b>Class 7 learners can't drive between midnight and 5 a.m.</b><div class="small">Alberta graduated licensing rule. Start anyway only if the driver now holds a licence without this restriction.</div></div>`:''}
    <div class="card">${RULES.checklist.map((t,i)=>`<label class="check"><input type="checkbox" id="ck${i}"><span>${esc(t)}</span></label>`).join('')}</div>
    <button class="btn ${late?'danger':'primary'} big" id="goBtn">${late?'Start anyway':'Start lesson'}</button>
    <div class="row" style="justify-content:space-between"><button class="btn" id="preCancel">Cancel</button><label class="check"><input type="checkbox" id="preSkip"><span class="small">Don't show this again</span></label></div>`}
@@ -450,7 +451,7 @@ function renderDrive(){const r=route(),placed=placedCps(r.cps).length;
   if(ending){const el=Date.now()-sess.start;
     return `<h2>How did it go?</h2>
      <div class="sum">${gauge(fmtDur(el),'Time')}${gauge(sess.km.toFixed(1),'Km')}${gauge(sess.done.length+'/'+placed,'Checkpoints')}</div>
-     <h3>How did it feel for her?</h3>
+     <h3>How did it feel?</h3>
      <div class="chips">${FEEL.slice(1).map((t,i)=>`<button class="chip" data-feel="${i+1}" aria-pressed="${endForm.feel===i+1}">${t}</button>`).join('')}</div>
      <h3>Notes for next time</h3>
      <textarea id="endNotes" placeholder="e.g. Brakes late before stop signs. Lane changes much better.">${esc(endForm.notes)}</textarea>
@@ -467,7 +468,7 @@ function renderDrive(){const r=route(),placed=placedCps(r.cps).length;
      <button class="btn primary big" id="startBtn">Start lesson</button>
      <div class="row">${mapsLink(r)?`<a class="btn" href="${mapsLink(r)}" target="_blank" rel="noopener">Open route in Google Maps</a>`:''}</div>
      <h3>Checkpoints</h3>${cpList(r)}
-     <div class="small muted">Pins tick off by themselves within ${ARRIVE_M} m, in any order. You navigate, she only drives.</div>
+     <div class="small muted">Pins tick off by themselves within ${ARRIVE_M} m, in any order. The supervisor navigates; the driver just drives.</div>
      ${settingsBlock()}`}
 
 let planMode='go',loopMin=20,testMin=30,loopStart=null,testStart=null,editPlaces=false;
@@ -482,9 +483,9 @@ function destCard(){const mode=b=>`<button class="chip" data-pm="${b}" aria-pres
     <div class="row" style="justify-content:space-between"><button class="btn small" id="destPick">Pick on the map</button>${S.routes.some(x=>x.id===DRIVE_ID)&&route().id!==DRIVE_ID?`<button class="btn small" data-goroute="${DRIVE_ID}">Last A → B route</button>`:''}</div>
     <div class="small muted">Fastest route from where you are. Every stop sign, set of lights, turn, roundabout, merge and playground zone on the way becomes a checkpoint, with turn-by-turn voice.</div>`;
   else if(planMode==='loop')body=`<div class="small"><b>Start:</b> ${loopStart?esc(loopStart.name):'where you are'}${loopStart?' <button class="btn small" id="loopHere">Use my location</button>':''}</div>${placesRow('loopfrom')}
-    ${lens(loopMin,'loopmin',[10,20,30,45])}<div class="small">Focus from her skill board: <b>${esc(focusLine('loop',loopMin))}</b></div>
+    ${lens(loopMin,'loopmin',[10,20,30,45])}<div class="small">Focus from the skill board: <b>${esc(focusLine('loop',loopMin))}</b></div>
     <button class="btn primary" id="buildLoop" ${planning?'disabled':''}>${planning?'Building…':'Build loop'}</button>
-    <div class="small muted">A round trip that passes the spots she needs most. Tap again for a different loop.</div>`;
+    <div class="small muted">A round trip past the spots that need the most practice. Tap again for a different loop.</div>`;
   else body=`<div class="small"><b>Test location:</b> ${testStart?esc(testStart.name):'pick a registry or address'}</div>${placesRow('testfrom')}
     <div class="row nowrap"><input type="text" id="testQ" placeholder="Registry name or address" aria-label="Road test location" enterkeyhint="search" autocomplete="off"><button class="btn" id="testGo">Find</button></div>
     ${testResults.length?`<div class="stack">${testResults.map((p,i)=>`<button class="entry" data-testres="${i}"><div class="top"><span>${esc(p.name)}</span></div><div class="meta">${esc(p.addr)}</div></button>`).join('')}</div>`:''}
@@ -500,7 +501,7 @@ function renderDriving(){const r=route(),nx=nextTarget(r.cps,sess.done),placed=p
      <div class="dnext">${nx?`<div class="small muted">Next · ${r.cps.indexOf(nx)+1} of ${r.cps.length}</div><div class="nm">${esc(nx.name)}</div><div class="ds" id="hNext">—</div>`
        :placed?'<div class="nm">All checkpoints done</div><div class="small muted">Head back and end the lesson</div>':'<div class="nm">Free drive</div><div class="small muted">No pins on this route</div>'}</div></div>
    ${nx&&nx.task?`<div class="small" style="margin-top:-4px">${esc(nx.task)}</div>`:''}
-   <div class="markrow" role="group" aria-label="Mark a moment">${Object.keys(FLAGS).map(t=>`<button class="chip ${FLAGS[t].good?'good':''}" data-flag="${esc(t)}">${t}</button>`).join('')}</div>
+   <div class="markrow" role="group" aria-label="Mark a moment">${Object.keys(FLAGS).map(t=>`<button class="chip ${FLAGS[t].good?'good':''}" data-flag="${esc(t)}">${t}</button>`).join('')}<button class="chip addstop" id="addStop">+ Stop sign</button></div>
    <div class="dbar">${nx?`<button class="btn" data-done="${nx.id}">✓ ${esc(nx.name.length>16?'Done':nx.name)}</button>`:'<span></span>'}<button class="btn" id="moreBtn">More</button><button class="btn stopbtn" id="endBtn">End</button></div>
    <div class="dmeta" id="hMeta"></div>`}
 
@@ -544,6 +545,8 @@ function renderRoutes(){const r=route(),n=stageNum(r),pins=placedCps(r.cps);
     <label class="small">Name<input type="text" id="rName" value="${esc(r.name)}"></label>
     <div class="row nowrap"><label class="small" style="max-width:120px">Stage<input type="text" id="rStage" value="${esc(r.stage)}"></label><label class="small grow">Goal<input type="text" id="rGoal" value="${esc(r.goal)}" placeholder="Goal for this route"></label></div>
     <div class="row"><button class="btn" id="newRoute">New route</button>${n?'':'<button class="btn danger" id="delRoute">Delete this route</button>'}</div></div></details>
+   ${S.userStops.length?`<details class="settings"><summary>Stop signs you added · ${S.userStops.length}</summary><div class="stack" style="margin-top:8px"><div class="small muted">Added with "+ Stop sign" during a lesson, for signs the map data was missing. They're used in new routes and rolling-stop checks.</div>
+    ${S.userStops.map((u,i)=>`<div class="row nowrap" style="justify-content:space-between"><span class="small">Stop sign ${i+1} · added ${new Date(u.t).toLocaleDateString(undefined,{month:'short',day:'numeric'})}</span><span class="row nowrap"><button class="btn small" data-showstop="${u.id}">Show</button><button class="btn small danger" data-delstop="${u.id}">✕</button></span></div>`).join('')}</div></details>`:''}
    <details class="settings"><summary>Backup</summary><div class="stack" style="margin-top:8px"><div class="row"><button class="btn" id="exportBtn">Back up all data</button><button class="btn" id="importBtn">Restore from backup</button></div>
     <div class="small muted" id="storageLine"></div></div></details>`}
 /* Editable pin list: name + task, move up/down, delete (pin and row together). */
@@ -601,7 +604,7 @@ function drawSpots(){if(!map)return;if(!spotLayer)spotLayer=L.layerGroup().addTo
   problemSpots(S.sessions).forEach(sp=>L.marker(sp.ll,{icon:L.divIcon({className:'',iconSize:[26,26],iconAnchor:[13,13],html:'<div class="spot"><span>!</span></div>'}),keyboard:false})
     .bindTooltip(`${esc(sp.label)} · ${sp.count}× in ${sp.lessons} lessons`,{direction:'top',offset:[0,-12]}).addTo(spotLayer))}
 function spotsCard(){const ps=problemSpots(S.sessions);if(!ps.length)return '';
-  return `<div class="card"><h3>Problem spots</h3><div class="small muted">Same mistake at the same place in 2+ lessons. Shown on the map with an orange marker; the voice gives a heads-up as she approaches.</div>
+  return `<div class="card"><h3>Problem spots</h3><div class="small muted">Same mistake at the same place in 2+ lessons. Shown on the map with an orange marker; the voice gives a heads-up on the way there.</div>
    ${ps.slice(0,6).map((sp,i)=>`<div class="row nowrap" style="justify-content:space-between"><div class="small"><b>${esc(sp.label)}</b> · ${sp.count}× in ${sp.lessons} lessons</div><button class="btn small" data-showspot="${i}">Show</button></div>`).join('')}</div>`}
 function render(){if(!S)return;drawSpots();
   if(lastKey){scrollMem[lastKey]=pane.scrollTop;if(lastKey==='skills')pane.querySelectorAll('details.coach').forEach(d=>d.open?openCards.add(d.dataset.k):openCards.delete(d.dataset.k))}
@@ -665,6 +668,11 @@ pane.addEventListener('click',async e=>{const pt=e.target.closest('[data-pt]');i
   if(d.feel){endForm.feel=+d.feel;persistActive();return render()}
   if(d.done)return markDone(r.cps.find(c=>c.id===d.done),false);
   if(d.flag)return addFlag(d.flag);
+  if(id==='addStop'){if(!lastFix)return toast('Waiting for GPS…');const u={id:uid(),ll:[+lastFix.ll[0].toFixed(6),+lastFix.ll[1].toFixed(6)],t:Date.now()};S.userStops.push(u);save();
+    const m=L.marker(u.ll,{icon:L.divIcon({className:'',iconSize:[24,24],iconAnchor:[12,12],html:'<div class="ustop">STOP</div>'})}).addTo(flagLayer);
+    return toast('Stop sign saved here. Future routes will include it.',{action:()=>{S.userStops=S.userStops.filter(x=>x!==u);flagLayer.removeLayer(m);save()},ms:6000})}
+  if(d.delstop){const i=S.userStops.findIndex(x=>x.id===d.delstop),u=S.userStops[i];S.userStops.splice(i,1);save();render();return toast('Stop sign removed',{action:()=>{S.userStops.splice(i,0,u);save();render()}})}
+  if(d.showstop){const u=S.userStops.find(x=>x.id===d.showstop);if(u){map.setView(u.ll,18);L.marker(u.ll,{icon:L.divIcon({className:'',iconSize:[24,24],iconAnchor:[12,12],html:'<div class="ustop">STOP</div>'})}).addTo(histLayer)}return}
   if(id==='resResume')return resumeActive(pendingResume,false);
   if(id==='resSave')return resumeActive(pendingResume,true);
   if(id==='resDiscard'){if(confirmTap(t,'Tap again to discard')){pendingResume=null;Store.del('active');render()}return}

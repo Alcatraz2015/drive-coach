@@ -192,7 +192,7 @@ function maneuvers(steps,g,cum){return steps.filter(st=>NAV_TYPES.has(st.type)&&
 const SPOTS={
   stop:['Stop sign','Full stop behind the line, count 2, look left, right, left.'],
   allway:['4-way stop','First to stop goes first. Arrive together: yield to the right.'],
-  signals:['Traffic lights','Cover the brake on a stale green. Stop on amber if she safely can.'],
+  signals:['Traffic lights','Cover the brake on a stale green. Stop on amber if you safely can.'],
   left:['Left turn','Signal early, check oncoming, turn into the nearest lane.'],
   right:['Right turn','Signal, slow before the turn, watch for bikes and people, stay close to the curb.'],
   uturn:['U-turn','Only where allowed. Signal, check all around, one smooth turn.'],
@@ -216,7 +216,7 @@ function planDrive(nav,els,mkId=uid){
     else if(st.type==='turn'||st.type==='end of road'){if(m==='uturn')k='uturn';else if(m==='left'||m==='sharp left')k='left';else if(m==='right'||m==='sharp right')k='right'}
     if(k)items.push({k,ll:st.loc,street:st.name||'',along:projectOnPath(g,cum,st.loc).along})});
   for(const e of els){const t=e.tags||{};if(e.type!=='node')continue;const ll=[e.lat,e.lon];
-    if((t.highway==='stop'||t.highway==='traffic_signals')&&onRoute.has(String(e.id))){const p=projectOnPath(g,cum,ll);items.push({k:t.highway==='traffic_signals'?'signals':t.stop==='all'?'allway':'stop',ll,street:'',along:p.along})}
+    if((t.highway==='stop'||t.highway==='traffic_signals')&&(onRoute.has(String(e.id))||t.user&&(projectOnPath(g,cum,ll)||{}).off<=15)){const p=projectOnPath(g,cum,ll);items.push({k:t.highway==='traffic_signals'?'signals':t.stop==='all'?'allway':'stop',ll,street:'',along:p.along})}
     else if(t.leisure==='playground'){const p=projectOnPath(g,cum,ll);if(p&&p.off<=100)items.push({k:'play',ll:g[p.i],street:'',along:p.along})}}
   items.sort((a,b)=>a.along-b.along);
   // merge spots at the same place: a turn plus the stop/lights it happens at becomes one checkpoint

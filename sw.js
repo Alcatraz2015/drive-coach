@@ -1,7 +1,7 @@
 /* Drive Coach service worker: makes the app open without signal after the first visit.
    App files: network first (so updates arrive right away), cached copy when offline.
    Libraries and fonts: cache first. Map tiles: cached as you view them, newest 2000 kept. */
-const V='dc-v12', SHELL=['./','index.html','css/app.css','js/data.js','js/logic.js','js/store.js','js/osm.js','js/report.js','js/app.js','manifest.webmanifest','icons/icon-192.png'];
+const V='dc-v13', SHELL=['./','index.html','css/app.css','js/data.js','js/logic.js','js/store.js','js/osm.js','js/report.js','js/app.js','manifest.webmanifest','icons/icon-192.png'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(V).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==V&&k!=='dc-tiles').map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 async function trimTiles(c){const ks=await c.keys();if(ks.length>2000)await Promise.all(ks.slice(0,ks.length-2000).map(k=>c.delete(k)))}

@@ -219,3 +219,6 @@ details.settings summary{cursor:pointer;font:800 13px/1.2 var(--display);text-tr
 .iconbtn:disabled{opacity:.3}
 
 .uturn{width:28px;height:28px;border-radius:50%;background:#E8710A;color:#fff;border:2px solid #fff;display:grid;place-items:center;font:900 18px/1 var(--display);box-shadow:0 1px 4px rgb(0 0 0/.4)}
+
+.chip.addstop{border-color:#C8102E;color:#C8102E}
+.ustop{width:24px;height:24px;background:#C8102E;color:#fff;font:900 7px/24px var(--display);text-align:center;letter-spacing:.02em;clip-path:polygon(30% 0,70% 0,100% 30%,100% 70%,70% 100%,30% 100%,0 70%,0 30%)}
