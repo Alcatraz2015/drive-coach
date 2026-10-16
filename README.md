@@ -27,7 +27,7 @@ Everything stays on the phone, in the browser's IndexedDB storage. There is no s
 
 ## Tests
 ```
-node --test tests/
+node --test tests/*.test.js
 ```
 
 ## Rules used

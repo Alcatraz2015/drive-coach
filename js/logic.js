@@ -142,7 +142,7 @@ function buildStage(n,F,s,lot,mkId=uid){
   if(n===2){let cur=s;const slots=['stop','stop','stop','play','allway','start'];
     return tpl.cps.map(([nm,tk],i)=>{const k=slots[i];if(k==='start')return mk(nm,tk,s);
       const f=k==='allway'?take(F.allway.length?F.allway:F.stop,cur):k==='play'?take(F.play,cur,100):take(F.stop,cur);
-      if(f)cur=f.ll;return mk(nm,tk,f&&f.ll,f&&f.name)})}
+      if(f)cur=f.ll;const c=mk(nm,tk,f&&f.ll,f&&f.name);if(f&&(k==='stop'||k==='allway')){c.kind=k;c.stopAt=[+f.ll[0].toFixed(6),+f.ll[1].toFixed(6)]}return c})}
   if(n===3){let cur=s;return tpl.cps.map(([nm,tk])=>{const f=take(F.signals,cur,300);if(f)cur=f.ll;return mk(nm,tk,f&&f.ll)})}
   if(n===4){let cur=s;return [1,2,3].map(i=>{const f=take(F.round,cur,250);if(f)cur=f.ll;
     return mk('Roundabout '+i,'Slow early and pick your lane, yield to traffic already inside, signal right before your exit.',f&&f.ll,f&&f.name)})}
@@ -150,7 +150,7 @@ function buildStage(n,F,s,lot,mkId=uid){
   if(n===6){let cur=s;if(lot){used.push(lot);cur=lot.ll}
     const st=take(F.stop,cur);if(st)cur=st.ll;const sg=take(F.signals,cur,300);if(sg)cur=sg.ll;const rd=take(F.round,cur,250);
     return [mk('Pre-trip check','Explain the controls out loud before moving.',s),mk('Parking','Stall park forward and reverse, then a three-point turn.',lot&&lot.ll,lot&&lot.name,true),
-      mk('Stop sign','Full stop behind the line, look left, right, left.',st&&st.ll),mk('Traffic signals','Approach a stale green ready to stop. Smooth left on green.',sg&&sg.ll),
+      Object.assign(mk('Stop sign','Full stop behind the line, look left, right, left.',st&&st.ll),st?{kind:'stop',stopAt:[+st.ll[0].toFixed(6),+st.ll[1].toFixed(6)]}:{}),mk('Traffic signals','Approach a stale green ready to stop. Smooth left on green.',sg&&sg.ll),
       mk('Roundabout','Pick the lane early, yield, signal out.',rd&&rd.ll,rd&&rd.name),mk('Back to start','Park at the curb, wheels within 30 cm.',s)]}
   return []}
 
@@ -200,10 +200,11 @@ const SPOTS={
   merge:['Highway merge','Get up to speed on the ramp, signal, shoulder check, find the gap.'],
   exit:['Highway exit','Signal early, move into the exit lane, slow down on the ramp, not the highway.'],
   play:['Playground zone','30 km/h, 7:30 a.m. to 9 p.m. Watch between parked cars.'],
-  dest:['Destination','Park safely at the curb or in a stall.']};
+  dest:['Destination','Park safely at the curb or in a stall.'],
+  park:['Parking practice','Parallel park within 30 cm of the curb, then a hill park and a three-point turn.']};
 const CONTROL={stop:'a stop sign',allway:'a 4-way stop',signals:'lights'};
 /* What the voice says to the driver as a spot comes up (tips stay on screen for the supervisor). */
-const SAY={stop:'Stop sign ahead. Full stop at the line.',allway:'Four-way stop ahead.',signals:'Traffic lights ahead.',play:'Playground zone. Slow to 30.',
+const SAY={stop:'Stop sign ahead. Full stop at the line.',allway:'Four-way stop ahead.',signals:'Traffic lights ahead.',play:'Playground zone. Slow to 30.',park:'Parking practice coming up.',
   left:'Left turn ahead.',right:'Right turn ahead.',uturn:'U-turn ahead.',roundabout:'Roundabout ahead.',merge:'Highway merge ahead.',exit:'Highway exit ahead.',dest:'You have arrived.'};
 /* Turn a planned drive into checkpoints, in driving order.
    nav = {g, steps:[{type,modifier,exit,name,loc}], nodes:[OSM node ids on the route]}; els = OSM elements near the path. */
@@ -221,17 +222,19 @@ function planDrive(nav,els,mkId=uid){
   // merge spots at the same place: a turn plus the stop/lights it happens at becomes one checkpoint
   const out=[];for(const it of items){const prev=out[out.length-1];
     if(prev&&it.along-prev.along<45){const ctl=CONTROL[it.k]?it:CONTROL[prev.k]?prev:null,turn=['left','right','uturn'].includes(it.k)?it:['left','right','uturn'].includes(prev.k)?prev:null;
-      if(ctl&&turn&&ctl!==turn){const ck=ctl.k,tk=turn.k,tl=turn.ll,ts=turn.street;prev.k=tk;prev.ctl=ck;prev.ll=tl;prev.street=ts||prev.street}
+      if(ctl&&turn&&ctl!==turn){const ck=ctl.k,cl=ctl.ll,tk=turn.k,tl=turn.ll,ts=turn.street;prev.k=tk;prev.ctl=ck;prev.ctlAt=cl;prev.ll=tl;prev.street=ts||prev.street}
       else if(it.k===prev.k||CONTROL[it.k]&&CONTROL[prev.k]){if(it.k==='allway')prev.k='allway'}
       else out.push(it);continue}
     out.push(it)}
   const cps=out.map(it=>{const [nm,tk]=SPOTS[it.k],ctl=it.ctl?SPOTS[it.ctl]:null;
     const name=(ctl?`${nm} at ${CONTROL[it.ctl]}`:nm)+(it.street?` · ${it.street}`:'');
-    return {id:mkId(),name,task:ctl?`${ctl[1]} Then: ${tk.charAt(0).toLowerCase()+tk.slice(1)}`:tk,lat:+it.ll[0].toFixed(6),lng:+it.ll[1].toFixed(6),kind:it.ctl||it.k}});
+    const kind=it.ctl||it.k,stopLL=(kind==='stop'||kind==='allway')?(it.ctl?it.ctlAt:it.ll):null;
+    return {id:mkId(),name,task:ctl?`${ctl[1]} Then: ${tk.charAt(0).toLowerCase()+tk.slice(1)}`:tk,lat:+it.ll[0].toFixed(6),lng:+it.ll[1].toFixed(6),kind,
+      ...(stopLL?{stopAt:[+stopLL[0].toFixed(6),+stopLL[1].toFixed(6)]}:{})}});
   const end=g[g.length-1];cps.push({id:mkId(),name:SPOTS.dest[0],task:SPOTS.dest[1],lat:+end[0].toFixed(6),lng:+end[1].toFixed(6),kind:'dest'});
   return cps}
 const PLURAL={'Stop sign':'stop signs','4-way stop':'4-way stops','Traffic lights':'sets of lights','Left turn':'left turns','Right turn':'right turns','U-turn':'U-turns',
-  'Roundabout':'roundabouts','Highway merge':'highway merges','Highway exit':'highway exits','Playground zone':'playground zones'};
+  'Roundabout':'roundabouts','Highway merge':'highway merges','Highway exit':'highway exits','Playground zone':'playground zones','Parking practice':'parking stops'};
 function spotSummary(cps){const c={};cps.forEach(x=>{if(x.kind&&x.kind!=='dest'){const n=SPOTS[x.kind][0];c[n]=(c[n]||0)+1}});
   return Object.entries(c).sort((a,b)=>b[1]-a[1]).map(([k,n])=>n===1?(k==='Traffic lights'?'1 set of lights':`1 ${k.toLowerCase()}`):`${n} ${PLURAL[k]}`).join(', ')}
 
@@ -248,8 +251,52 @@ function speakable(t){if(!t)return t;
   t=t.replace(/\b(Queen Elizabeth) II\b/g,'$1 the Second').replace(/\bQE ?II\b|\bQE2\b/g,'Q E 2');
   return t}
 
+/* ---------- automatic coaching checks ---------- */
+/* Rolling stop: feed distance to the stop line (m) and raw GPS speed (km/h) on every fix.
+   Returns 'ok' or 'rolled' once, after the car has reached the line and driven 40 m past it; otherwise null. */
+const STOP_OK_KMH=6;
+function stopCheck(st,d,kmh){if(st.done)return null;
+  if(d<=30&&kmh!=null)st.min=Math.min(st.min??Infinity,kmh);
+  if(d<=15)st.near=true;
+  if(st.near&&d>40){st.done=true;return (st.min??Infinity)<=STOP_OK_KMH?'ok':'rolled'}
+  return null}
+/* Hard braking from two raw GPS speed readings: losing 3.5+ m/s every second (about a third of g) from 20+ km/h. */
+function hardBrake(prev,cur){if(!prev||prev.kmh==null||cur.kmh==null)return false;const dt=(cur.t-prev.t)/1000;
+  if(dt<0.8||dt>3||prev.kmh<20)return false;return (prev.kmh-cur.kmh)/3.6/dt>=3.5}
+
+/* Problem spots: the same mistake at the same place (within 40 m) in 2+ different lessons. */
+function problemSpots(sessions,minLessons=2){const groups=[];
+  for(const s of sessions)for(const f of (s.flags||[])){if(!f.ll||(D.FLAGS[f.label]||{}).good)continue;
+    const g=groups.find(x=>x.label===f.label&&hav(x.ll,f.ll)<=40);
+    if(g){g.pts.push(f.ll);g.ses.add(s.id);g.ll=[g.pts.reduce((a,p)=>a+p[0],0)/g.pts.length,g.pts.reduce((a,p)=>a+p[1],0)/g.pts.length]}
+    else groups.push({label:f.label,ll:f.ll,pts:[f.ll],ses:new Set([s.id])})}
+  return groups.filter(g=>g.ses.size>=minLessons).map(g=>({label:g.label,ll:[+g.ll[0].toFixed(6),+g.ll[1].toFixed(6)],count:g.pts.length,lessons:g.ses.size}))
+    .sort((a,b)=>b.lessons-a.lessons||b.count-a.count)}
+const HEADS_UP={'Hard brake':'brake early here','Late signal':'signal early here','Missed shoulder check':'shoulder check here','Too fast':'watch your speed here',
+  'Rolled the stop':'full stop here','Wide turn':'keep the turn tight here','Drifting in lane':'stay centred in your lane here'};
+
+/* ---------- practice loops ---------- */
+/* How much each kind of spot is worth practising, from the skill board (weaker skill = higher weight). */
+const LOOP_SKILLS={round:['round'],signals:['amber','unprot','lturn'],stop:['stops','fourway'],play:['zones','speed'],ramp:['merge','exit']};
+function focusWeights(skills,mode){if(mode==='test')return {stop:3,signals:3,play:3,round:2,ramp:0};
+  const w={};for(const [k,ks] of Object.entries(LOOP_SKILLS))w[k]=1+ks.reduce((a,x)=>a+(3-(skills[x]||0)),0)/ks.length;return w}
+/* Pick n spots around start to visit as a loop: about r metres out, spread around the compass, weighted by w. rnd = random 0..1 source. */
+function pickLoopTargets(cands,start,r,w,n,rnd=Math.random){
+  const pool=cands.filter(c=>(w[c.kind]||0)>0).map(c=>{const d=hav(start,c.ll);return {...c,d,b:bearing(start,c.ll)}}).filter(c=>c.d>=0.35*r&&c.d<=1.6*r);
+  const picked=[],gap=300/(n+1);
+  for(let i=0;i<n;i++){let best=null,bs=-1e9;
+    for(const c of pool){if(picked.includes(c)||picked.some(p=>hav(p.ll,c.ll)<250||angDiff(p.b,c.b)<gap))continue;
+      const sc=(w[c.kind]||0)*(picked.some(p=>p.kind===c.kind)?0.6:1)-Math.abs(c.d-r)/r+rnd()*0.8;if(sc>bs){bs=sc;best=c}}
+    if(best)picked.push(best)}
+  return picked.sort((a,b)=>a.b-b.b)}
+
+/* ---------- GPS gaps ---------- */
+/* Split a track into drawable pieces at the recorded break indexes (where tracking paused). */
+function trackSegments(track,breaks){if(!track||!track.length)return [];const bs=[...(breaks||[])].sort((a,b)=>a-b),out=[];let s=0;
+  for(const b of bs){if(b>s&&b<track.length){out.push(track.slice(s,b));s=b}}out.push(track.slice(s));return out.filter(x=>x.length)}
+
 const API={uid,esc,hav,bearing,angDiff,fmtDur,fmtDist,stageNum,median,GPS,acceptFix,smoothSpeed,thinTrack,placedCps,arrivals,nextTarget,skippedCps,
   skillPct,hours,badFlags,mistakeSeries,topMistakes,suggestNext,curfew,testEligibleFrom,parseMaxspeed,inBox,segDist,limitAt,
-  roadAt,playZoneRoad,SAY,speakable,pathArrows,cumDist,projectOnPath,instruction,maneuvers,planDrive,spotSummary,SPOTS,polyArea,cluster,carLot,parseFeatures,rankLots,lotPins,walkRamp,buildStage};
+  roadAt,playZoneRoad,SAY,speakable,stopCheck,hardBrake,problemSpots,HEADS_UP,focusWeights,pickLoopTargets,trackSegments,LOOP_SKILLS,pathArrows,cumDist,projectOnPath,instruction,maneuvers,planDrive,spotSummary,SPOTS,polyArea,cluster,carLot,parseFeatures,rankLots,lotPins,walkRamp,buildStage};
 if(typeof module!=='undefined')module.exports=API;else Object.assign(root,API);
 })(typeof window!=='undefined'?window:globalThis);

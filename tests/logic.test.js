@@ -1,4 +1,4 @@
-// Run: node --test tests/
+// Run: node --test tests/*.test.js
 const test=require('node:test'),assert=require('node:assert/strict');
 const L=require('../js/logic.js'),D=require('../js/data.js');
 const at=(lat,lng)=>[lat,lng];
@@ -131,4 +131,41 @@ test('street names are read out in full',()=>{
     'Merge onto Queen Elizabeth II Highway.':'Merge onto Queen Elizabeth the Second Highway.',
     'East Lake Cres NE':'East Lake Crescent North East','Speed limit 50.':'Speed limit 50.','Stop sign ahead. Full stop at the line.':'Stop sign ahead. Full stop at the line.'};
   for(const [a,b] of Object.entries(cases))assert.equal(L.speakable(a),b);
+});
+
+test('rolling stop vs full stop',()=>{
+  const run=samples=>{const st={};let v=null;for(const [d,k] of samples){const r=L.stopCheck(st,d,k);if(r)v=r}return v};
+  assert.equal(run([[60,40],[30,25],[15,12],[5,9],[20,15],[45,25]]),'rolled');   // never below 9 km/h
+  assert.equal(run([[60,40],[30,20],[10,3],[2,0],[20,12],[45,25]]),'ok');
+  assert.equal(run([[60,40],[35,30],[25,20],[50,30]]),null);                     // never reached the line (turned off)
+});
+test('hard braking from GPS speed',()=>{
+  assert.equal(L.hardBrake({t:0,kmh:50},{t:1000,kmh:35}),true);                  // -4.2 m/s²
+  assert.equal(L.hardBrake({t:0,kmh:50},{t:1000,kmh:42}),false);                 // -2.2 m/s², normal
+  assert.equal(L.hardBrake({t:0,kmh:15},{t:1000,kmh:0}),false);                  // too slow to count
+  assert.equal(L.hardBrake({t:0,kmh:60},{t:6000,kmh:0}),false);                  // readings too far apart
+});
+test('problem spots need the same mistake at the same place in 2+ lessons',()=>{
+  const a=[51,-114],b=[51.0002,-114.0001],far=[51.01,-114];
+  const ss=[{id:1,flags:[{label:'Rolled the stop',ll:a},{label:'Too fast',ll:far}]},{id:2,flags:[{label:'Rolled the stop',ll:b},{label:'Nice job',ll:a}]},{id:3,flags:[{label:'Rolled the stop',ll:far}]}];
+  const ps=L.problemSpots(ss);assert.equal(ps.length,1);assert.equal(ps[0].label,'Rolled the stop');assert.equal(ps[0].lessons,2);
+});
+test('loop targets spread around the start and favour weak skills',()=>{
+  const start=[51,-114],c=[];
+  for(let i=0;i<24;i++){const ang=i*15*Math.PI/180;c.push({kind:i%3===0?'round':i%3===1?'stop':'signals',ll:[51+0.011*Math.cos(ang),-114+0.017*Math.sin(ang)]})}
+  const w=L.focusWeights({round:0,stops:3,fourway:3,amber:3,unprot:3,lturn:3});
+  assert.ok(w.round>w.stop&&w.round>w.signals);
+  const t=L.pickLoopTargets(c,start,1200,w,4,()=>0.5);
+  assert.equal(t.length,4);assert.ok(t.filter(x=>x.kind==='round').length>=2);
+  for(let i=1;i<t.length;i++)assert.ok(t[i].b>=t[i-1].b);
+});
+test('track splits at GPS gaps',()=>{
+  assert.deepEqual(L.trackSegments([[1,1],[2,2],[3,3],[4,4]],[2]),[[[1,1],[2,2]],[[3,3],[4,4]]]);
+  assert.deepEqual(L.trackSegments([[1,1]],[]),[[[1,1]]]);
+});
+test('A to B stop checkpoints keep the stop line position',()=>{
+  const g=[[51,-114],[51.005,-114],[51.005,-113.99]];
+  const steps=[{type:'depart',loc:g[0]},{type:'turn',modifier:'right',name:'X',loc:g[1]},{type:'arrive',loc:g[2]}];
+  const cps=L.planDrive({g,steps,nodes:[5]},[{type:'node',id:5,lat:51.0049,lon:-114,tags:{highway:'stop'}}]);
+  assert.equal(cps[0].kind,'stop');assert.deepEqual(cps[0].stopAt,[51.0049,-114]);
 });

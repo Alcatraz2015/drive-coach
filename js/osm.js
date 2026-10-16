@@ -69,15 +69,17 @@ const OSM=(()=>{
     finally{clearTimeout(tm)}}
 
   /* Fastest driving route A→B with turn-by-turn steps and the OSM node ids it passes (to tell which stop signs and lights are on it). */
-  async function navRoute(a,b){
-    const url=`https://router.project-osrm.org/route/v1/driving/${a[1].toFixed(6)},${a[0].toFixed(6)};${b[1].toFixed(6)},${b[0].toFixed(6)}?overview=full&geometries=geojson&steps=true&annotations=nodes`;
-    const ctl=new AbortController(),tm=setTimeout(()=>ctl.abort(),20000);
+  async function navRoute(a,b){const pts=b?[a,b]:a;
+    const url=`https://router.project-osrm.org/route/v1/driving/${pts.slice(0,25).map(p=>p[1].toFixed(6)+','+p[0].toFixed(6)).join(';')}?overview=full&geometries=geojson&steps=true&annotations=nodes&continue_straight=false`;
+    const ctl=new AbortController(),tm=setTimeout(()=>ctl.abort(),25000);
     try{const res=await fetch(url,{signal:ctl.signal});if(!res.ok)throw new Error('router '+res.status);const j=await res.json();
       if(j.code!=='Ok'||!j.routes||!j.routes[0])throw new Error(j.code==='NoRoute'?'No driving route between those points':'router: '+(j.message||j.code));
-      const r=j.routes[0],leg=r.legs[0];
-      return {g:r.geometry.coordinates.map(c=>[+c[1].toFixed(5),+c[0].toFixed(5)]),km:+(r.distance/1000).toFixed(1),min:Math.round(r.duration/60),
-        steps:leg.steps.map(st=>({type:st.maneuver.type,modifier:st.maneuver.modifier,exit:st.maneuver.exit,name:st.name||st.ref||'',loc:[st.maneuver.location[1],st.maneuver.location[0]]})),
-        nodes:(leg.annotation&&leg.annotation.nodes)||[]}}
+      const r=j.routes[0],steps=[],nodes=[],last=r.legs.length-1;
+      r.legs.forEach((leg,li)=>{leg.steps.forEach((st,si)=>{const t=st.maneuver.type;
+          if(t==='depart'&&li>0)return;if(t==='arrive'&&li<last)return;            // stops along a loop aren't arrivals
+          steps.push({type:t,modifier:st.maneuver.modifier,exit:st.maneuver.exit,name:st.name||st.ref||'',loc:[st.maneuver.location[1],st.maneuver.location[0]]})});
+        nodes.push(...((leg.annotation&&leg.annotation.nodes)||[]))});
+      return {g:r.geometry.coordinates.map(c=>[+c[1].toFixed(5),+c[0].toFixed(5)]),km:+(r.distance/1000).toFixed(1),min:Math.round(r.duration/60),steps,nodes}}
     finally{clearTimeout(tm)}}
   /* Stop signs, lights and playgrounds near a path: from the saved Calgary data, or live Overpass elsewhere. Never throws. */
   async function alongPath(g){

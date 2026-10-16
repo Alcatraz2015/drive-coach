@@ -13,7 +13,8 @@ function seed(){
 function migrate(x){
   if(!x.profiles){x.profiles=[{id:'p1',name:'Learner',since:'',testDate:'',goalHours:''}];x.profileId='p1';x.pdata={}}
   x.sessions=x.sessions||[];x.skills=x.skills||{};x.pdata=x.pdata||{};
-  x.settings=Object.assign({voice:true,speedAlerts:true,autoSpeedMarks:true,checklist:true},x.settings||{});
+  x.settings=Object.assign({voice:true,speedAlerts:true,autoSpeedMarks:true,checklist:true,autoChecks:true,spotWarnings:true},x.settings||{});
+  x.places=x.places||[];
   if(x.onboarded==null)x.onboarded=true;
   // Every stage route 1-6 must exist; bring back any that were deleted (empty, ready for pins).
   TEMPLATES.forEach((t,i)=>{if(!x.routes.some(r=>stageNum(r)===i+1))x.routes.push({id:uid(),name:t.name,stage:t.stage,goal:t.goal,cps:t.cps.map(([n,k])=>({id:uid(),name:n,task:k,lat:null,lng:null}))})});
@@ -128,8 +129,14 @@ function onPos(p){
   if(follow){const z=sess?followZoom(sm):map.getZoom();if(sess&&z!==map.getZoom()&&Date.now()-zoomAt>8000){zoomAt=Date.now();map.setView(ll,z,{animate:true})}else map.panTo(ll,{animate:true,duration:.5})}
   if(sess&&!ending){
     sess.kmh=sm;if(sm>sess.maxKmh&&speedBuf.length>=3)sess.maxKmh=sm;
+    // tracking paused (screen locked / another app): start a new track piece and say so
+    if(lastAccepted&&now-lastAccepted.t>20000){const gapMs=now-lastAccepted.t;sess.gaps=sess.gaps||[];sess.breaks=sess.breaks||[];
+      sess.gaps.push({from:lastAccepted.t,to:now,a:lastAccepted.ll,b:ll});sess.breaks.push(sess.track.length);sess.km+=hav(lastAccepted.ll,ll)/1000;
+      L.polyline([lastAccepted.ll,ll],{color:'#8A958E',weight:3,dashArray:'4 8',interactive:false}).addTo(flagLayer);
+      sess.track.push([+lat.toFixed(6),+lng.toFixed(6)]);trackLine.setLatLngs(trackSegments(sess.track,sess.breaks));lastAccepted={ll,t:now};
+      toast(`Tracking was paused for ${fmtDur(gapMs)} (screen locked or another app open). Keep Drive Coach on screen while driving.`,{ms:7000});persistActive()}
     const a=acceptFix(lastAccepted,{ll,t:now,acc});
-    if(a.ok){jumpRun=0;if(lastAccepted)sess.km+=a.dist/1000;sess.track.push([+lat.toFixed(6),+lng.toFixed(6)]);trackLine.addLatLng(ll);lastAccepted={ll,t:now}}
+    if(a.ok){jumpRun=0;if(lastAccepted)sess.km+=a.dist/1000;sess.track.push([+lat.toFixed(6),+lng.toFixed(6)]);const ls=trackLine.getLatLngs();trackLine.addLatLng(ll,Array.isArray(ls[0])?ls[ls.length-1]:ls);lastAccepted={ll,t:now}}
     else if(a.why==='jump'&&++jumpRun>=4){jumpRun=0;lastAccepted={ll,t:now}}   // 4 jumps in a row agree with each other: the old point was the glitch
     if(acc<=50&&a.why!=='jump'){const r=route();arrivals(r.cps,sess.done,ll,ARRIVE_M).forEach(c=>markDone(c,true));
       const nx=nextTarget(r.cps,sess.done);sess.nextDist=nx?hav(ll,[nx.lat,nx.lng]):null;
@@ -137,9 +144,21 @@ function onPos(p){
         if(!r.nav){say(`In ${Math.round(sess.nextDist/50)*50} metres: ${nx.name.split(' · ')[0]}.`)}
         else if(['stop','allway','signals','play'].includes(nx.kind)&&!nearManeuver(r,nx)){say(SAY[nx.kind]||`${nx.name.split(' · ')[0]} ahead.`)}}}
     if(route().nav)navUpdate(ll,acc,now);
+    if(acc<=25&&a.why!=='jump')autoChecks(ll,speed!=null&&speed>=0?speed*3.6:kmh,now);
     checkSpeed(ll,hd,now)}
   if(tab==='drive')updateHud();
 }
+
+/* ---------- automatic checks: rolling stops, hard braking, problem spots ---------- */
+let brakePrev=null,spotList=[];const spotWarned=new Map(),stopState=new Map();
+function autoChecks(ll,raw,now){const r=route(),on=S.settings.autoChecks;
+  if(on&&raw!=null){if(hardBrake(brakePrev,{t:now,kmh:raw})&&now-(sess.brakeAt||0)>20000){sess.brakeAt=now;addFlag('Hard brake',{auto:true})}brakePrev={t:now,kmh:raw}}
+  if(on)for(const c of r.cps){if(!c.stopAt)continue;const d=hav(ll,c.stopAt);if(d>120)continue;
+    const key=c.id;if(!stopState.has(key))stopState.set(key,{});const v=stopCheck(stopState.get(key),d,raw);
+    if(v==='rolled'){addFlag('Rolled the stop',{auto:true});say('That was a rolling stop.',{prio:1,ttl:5000})}}
+  if(S.settings.spotWarnings)for(const sp of spotList){const d=hav(ll,sp.ll),st=spotWarned.get(sp)||{};
+    if(!st.done&&d<=180&&d>40&&st.last!=null&&d<st.last){st.done=true;say(`Heads up, ${HEADS_UP[sp.label]||'take care here'}.`,{prio:1,ttl:6000})}
+    st.last=d;spotWarned.set(sp,st)}}
 
 /* ---------- speed limits ---------- */
 const lim={cell:null,ways:[],loading:false,failAt:0,cur:null,over:0,warnAt:0,markAt:0};
@@ -157,19 +176,20 @@ let pickingDest=false,destResults=[],planning=false;const navState={hint:null,of
 const DRIVE_ID='driveto';
 async function myPosition(){if(lastFix&&Date.now()-lastFix.t<60000)return lastFix.ll;
   return new Promise(res=>{if(!navigator.geolocation)return res(null);navigator.geolocation.getCurrentPosition(p=>res([p.coords.latitude,p.coords.longitude]),()=>res(null),{enableHighAccuracy:true,timeout:10000})})}
-async function buildNav(from,dest){const nav=await OSM.navRoute(from,dest.ll),raw=await OSM.alongPath(nav.g),cum0=cumDist(nav.g),els=[];
+/* Plan a drive through points [A, ...stops, B]; returns nav (path + maneuvers) and checkpoints. */
+async function buildNav(points){const nav=await OSM.navRoute(points),raw=await OSM.alongPath(nav.g),cum=cumDist(nav.g),els=[];
   for(const e of raw){if((e.tags||{}).leisure!=='playground'){els.push(e);continue}
-    const p=projectOnPath(nav.g,cum0,[e.lat,e.lon]);if(!p||p.off>100)continue;const at=nav.g[p.i];
+    const p=projectOnPath(nav.g,cum,[e.lat,e.lon]);if(!p||p.off>100)continue;const at=nav.g[p.i];
     try{const {ways}=await OSM.roads(at);if(playZoneRoad((roadAt(ways,at,null)||{}).tags))els.push(e)}catch(err){}}
   const cps=planDrive(nav,els);
-  const cum=cumDist(nav.g);return {nav:{g:nav.g,man:maneuvers(nav.steps,nav.g,cum),km:nav.km,min:nav.min},cps}}
+  return {nav:{g:nav.g,man:maneuvers(nav.steps,nav.g,cum),km:nav.km,min:nav.min},cps,cum}}
+function installRoute(id,props,nav,cps){let r=S.routes.find(x=>x.id===id);if(!r){r={id};S.routes.push(r)}
+  Object.assign(r,props,{cps,nav,area:S.areaId});r.path={key:pathKey(placedCps(cps).map(c=>[c.lat,c.lng])),g:nav.g,km:nav.km,min:nav.min};
+  S.activeRouteId=r.id;save();drawRoute();fitRoute();tab='drive';syncTabs();return r}
 async function planDriveTo(dest){if(sess)return toast('End the lesson first');if(planning)return;planning=true;destResults=[];render();toast('Planning the route…',{ms:15000});
   try{let from=await myPosition();if(!from){const c=map.getCenter();from=[c.lat,c.lng];toast('No GPS fix, so the route starts from the map centre')}
-    const {nav,cps}=await buildNav(from,dest);
-    let r=S.routes.find(x=>x.id===DRIVE_ID);if(!r){r={id:DRIVE_ID};S.routes.push(r)}
-    Object.assign(r,{name:`To ${dest.name}`,stage:'A → B',goal:`${nav.km} km · about ${nav.min} min · ${spotSummary(cps)||'no marked spots'}`,cps,dest,nav,area:S.areaId});
-    r.path={key:pathKey(placedCps(cps).map(c=>[c.lat,c.lng])),g:nav.g,km:nav.km,min:nav.min};
-    S.activeRouteId=r.id;save();drawRoute();fitRoute();tab='drive';syncTabs();
+    const {nav,cps}=await buildNav([from,dest.ll]);
+    installRoute(DRIVE_ID,{name:`To ${dest.name}`,stage:'A → B',goal:`${nav.km} km · about ${nav.min} min · ${spotSummary(cps)||'no marked spots'}`,dest,via:[]},nav,cps);
     toast(`${nav.km} km, about ${nav.min} min. ${cps.length-1} practice spots on the way.`,{ms:5000})}
   catch(e){toast(String(e.message||e).includes('No driving route')?'No driving route to that spot. Pick a point on a road.':'Couldn\'t plan the route right now. Check the connection and try again.',{ms:6000})}
   finally{planning=false;render()}}
@@ -178,7 +198,7 @@ async function destSearch(q){q=q.trim();if(!q)return;const box=document.getEleme
 /* Called on every good GPS fix during an A→B lesson: next maneuver, voice, off-route detection. */
 const cumCache=new WeakMap();
 function navUpdate(ll,acc,now){const r=route(),nv=r.nav;if(!nv||!nv.man)return;if(!cumCache.has(nv))cumCache.set(nv,cumDist(nv.g));
-  const p=projectOnPath(nv.g,cumCache.get(nv),ll,navState.hint);if(!p)return;navState.hint=p.i;
+  const p=projectOnPath(nv.g,cumCache.get(nv),ll,navState.hint);if(!p)return;navState.hint=p.i;navState.along=p.along;
   if(acc<=30){navState.off=p.off>50?navState.off+1:0;if(navState.off>=3&&now-navState.rerouteAt>20000){navState.rerouteAt=now;navState.off=0;reroute(ll)}}
   const m=nv.man.find(x=>x.along>p.along+8);navState.next=m?{m,dist:m.along-p.along}:null;if(!m)return;
   const d=m.along-p.along,key=m.along.toFixed(0),said=navState.said[key]||0,fast=(sess.kmh||0)>65,far=fast?700:300;
@@ -187,12 +207,41 @@ function navUpdate(ll,acc,now){const r=route(),nv=r.nav;if(!nv||!nv.man)return;i
     say(`In ${d>=1000?(d/1000).toFixed(1)+' kilometres':Math.round(d/50)*50+' metres'}, ${m.text.charAt(0).toLowerCase()+m.text.slice(1)}.`,{prio:2,ttl:12000,man:key})}
   else if(said<2&&d<=(fast?250:60)){navState.said[key]=2;const far=speech.q.findIndex(x=>x.man===key);if(far>=0)speech.q.splice(far,1);say(m.text,{prio:3})}}
 async function reroute(ll){const r=route();if(!r.dest)return;say('Rerouting.',{prio:2,ttl:5000});toast('Off the route. Re-planning…');
-  try{const {nav,cps}=await buildNav(ll,r.dest);if(route()!==r||!sess)return;
+  const left=(r.via||[]).filter(v=>v.along==null||v.along>(navState.along||0)+50).map(v=>v.ll);
+  try{const {nav,cps,cum}=await buildNav([ll,...left,r.dest.ll]);if(route()!==r||!sess)return;
+    r.via=(r.via||[]).filter(v=>left.includes(v.ll)).map(v=>({...v,along:projectOnPath(nav.g,cum,v.ll).along}));
     const done=r.cps.filter(c=>sess.done.includes(c.id)),fresh=cps.filter(c=>!done.some(d=>hav([d.lat,d.lng],[c.lat,c.lng])<40));
     r.cps=[...done,...fresh];r.nav=nav;r.goal=`${nav.km} km · about ${nav.min} min · ${spotSummary(fresh)||'no marked spots'}`;r.path={key:pathKey(placedCps(r.cps).map(c=>[c.lat,c.lng])),g:nav.g,km:nav.km,min:nav.min};
     navState.hint=null;navState.said={};navState.next=nav.man[0]?{m:nav.man[0],dist:nav.man[0].along}:null;save();drawRoute();render();persistActive();
     const m=nav.man[0];toast(`New route: ${nav.km} km, about ${nav.min} min`);if(m)say(m.text+'.',{prio:2})}
   catch(e){toast('Off the route and couldn\'t re-plan. Follow the map back to the yellow line.',{ms:6000})}}
+/* Practice loop from start: visits spots matching her weakest skills (or road-test items) and comes back. */
+const LOOP_ID='loop',TEST_ID='roadtest';
+const KIND_LABEL={round:'roundabouts',signals:'lights and left turns',stop:'stop signs',play:'playground zones',ramp:'highway merges'};
+function focusLine(mode,minutes){const w=focusWeights(S.skills,mode);if(minutes<30||w.ramp<2.5)w.ramp=0;return Object.entries(w).filter(([k,v])=>v>0&&KIND_LABEL[k]).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k])=>KIND_LABEL[k]).join(', ')}
+async function planLoop({start,startName,minutes,mode}){if(sess)return toast('End the lesson first');if(planning)return;planning=true;render();toast(mode==='test'?'Building a road test loop…':'Building a practice loop…',{ms:20000});
+  try{if(!start){start=await myPosition();startName='where you are';if(!start){const c=map.getCenter();start=[c.lat,c.lng];startName='the map centre';toast('No GPS fix, so the loop starts from the map centre')}}
+    const R=Math.max(600,minutes*60),w=focusWeights(S.skills,mode),F=await OSM.features(['stop','signals','round','play'],start);
+    const cands=[...F.round.map(f=>({kind:'round',ll:f.ll})),...F.signals.map(f=>({kind:'signals',ll:f.ll})),...F.stop.map(f=>({kind:'stop',ll:f.ll})),...F.play.map(f=>({kind:'play',ll:f.ll}))];
+    let targets=pickLoopTargets(cands,start,R,w,Math.max(2,Math.min(6,Math.round(minutes/7))));
+    if(mode!=='test'&&minutes>=30&&w.ramp>=2.5){try{const wr=walkRamp(await OSM.features(['ramp'],start),start);
+      if(wr){const b=bearing(start,wr.onRamp),i=targets.findIndex(t=>t.b>b);targets.splice(i<0?targets.length:i,0,{kind:'ramp',ll:wr.onRamp,b},{kind:'ramp',ll:wr.exit,b})}}catch(e){}}
+    let park=null;if(mode==='test'){try{const {ways}=await OSM.roads(start);let best=null,bd=1e9;
+      for(const x of ways){if(x.tags.highway!=='residential'||x.g.length<2)continue;const m=x.g[Math.floor(x.g.length/2)],d=hav(start,m);if(d>150&&d<700&&d<bd){bd=d;best=m}}
+      if(best)park=best}catch(e){}}
+    if(!targets.length&&!park)throw new Error('nothing near');
+    let res;for(let k=0;k<3;k++){res=await buildNav([start,...targets.map(t=>t.ll),...(park?[park]:[]),start]);
+      if(res.nav.min<=minutes*1.4||targets.length<=2)break;targets=targets.filter(t=>t!==targets.reduce((a,b)=>hav(start,b.ll)>hav(start,a.ll)?b:a))}
+    const {nav,cps,cum}=res,end=cps[cps.length-1];end.name='Back to start';end.task='Park safely. Debrief: one thing that went well, one to work on.';
+    if(park){const pa=projectOnPath(nav.g,cum,park).along;const c={id:uid(),name:SPOTS.park[0],task:SPOTS.park[1],lat:+park[0].toFixed(6),lng:+park[1].toFixed(6),kind:'park'};
+      const at=cps.findIndex(x=>projectOnPath(nav.g,cum,[x.lat,x.lng]).along>pa);cps.splice(at<0?cps.length-1:at,0,c)}
+    const via=[...targets.map(t=>({ll:t.ll})),...(park?[{ll:park}]:[])].map(v=>({...v,along:projectOnPath(nav.g,cum,v.ll).along}));
+    const id=mode==='test'?TEST_ID:LOOP_ID;
+    installRoute(id,{name:mode==='test'?`Road test practice · ${startName}`:`${minutes}-min loop from ${startName}`,stage:mode==='test'?'Road test':'Loop',
+      goal:`${nav.km} km · about ${nav.min} min · ${spotSummary(cps)||'no marked spots'}`,dest:{name:'the start',ll:start},via},nav,cps);
+    toast(`${nav.km} km, about ${nav.min} min, ${cps.length-1} practice spots.${nav.min>minutes*1.4?' Longer than asked: not many spots nearby.':''}`,{ms:6000})}
+  catch(e){toast(String(e.message).includes('nothing near')?'Not enough practice spots near there. Try a longer loop or another start.':'Couldn\'t build the loop right now. Check the connection and try again.',{ms:6000})}
+  finally{planning=false;render()}}
 const nearManeuver=(r,c)=>r.nav&&r.nav.man.some(m=>hav(m.ll,[c.lat,c.lng])<45);
 function navBanner(){const r=route();if(!r.nav)return '';
   return `<div class="navbar" id="hNav"><span class="nicon" id="hNavI">↑</span><div class="grow"><div class="nd" id="hNavD">—</div><div class="nt" id="hNavT">Head to the yellow line</div></div></div>`}
@@ -200,7 +249,7 @@ function navBanner(){const r=route();if(!r.nav)return '';
 /* ---------- lesson ---------- */
 let sess=null,ending=false,tick=null,hudTimer=null,wake=null,expanded=false,prestart=false,pendingResume=null;
 let endForm={feel:0,notes:''};const flagMarkers=new Map();
-function newSession(){navState.hint=null;navState.off=0;navState.said={};navState.next=null;return {id:uid(),start:Date.now(),routeId:route().id,track:[],km:0,maxKmh:0,kmh:0,done:[],flags:[],announced:[],nextDist:null}}
+function newSession(){brakePrev=null;stopState.clear();spotWarned.clear();spotList=problemSpots(S.sessions);navState.hint=null;navState.off=0;navState.said={};navState.next=null;return {id:uid(),start:Date.now(),routeId:route().id,track:[],breaks:[],gaps:[],km:0,maxKmh:0,kmh:0,done:[],flags:[],announced:[],nextDist:null}}
 async function grabWake(){try{if(!wake)wake=await navigator.wakeLock?.request('screen');wake?.addEventListener?.('release',()=>{wake=null})}catch(e){}}
 function beginRunning(){ensureWatch();follow=true;userPanAt=0;zoomAt=0;document.getElementById('locBtn').setAttribute('aria-pressed','true');if(lastFix)map.setView(lastFix.ll,17);
   grabWake();clearInterval(tick);tick=setInterval(()=>{if(tab==='drive')updateHud();persistActive()},5000);
@@ -209,7 +258,7 @@ function beginRunning(){ensureWatch();follow=true;userPanAt=0;zoomAt=0;document.
 function startSession(){unlockAudio();prestart=false;expanded=false;lim.over=0;
   sess=newSession();lastAccepted=null;speedBuf.length=0;
   trackLine.setLatLngs([]);flagLayer.clearLayers();flagMarkers.clear();histLayer.clearLayers();setPlacing(false);
-  const nx=nextTarget(route().cps,[]),rr=route();say(rr.nav?`Let's go. ${rr.nav.km} kilometres to ${rr.dest.name}.`:nx?`Let's go. First: ${nx.name.split(' · ')[0]}.`:"Let's go.",{prio:2,ttl:15000});
+  const nx=nextTarget(route().cps,[]),rr=route();say(rr.nav?(rr.dest&&rr.dest.name==='the start'?`Let's go. A ${rr.nav.km} kilometre loop, about ${rr.nav.min} minutes.`:`Let's go. ${rr.nav.km} kilometres to ${rr.dest.name}.`):nx?`Let's go. First: ${nx.name.split(' · ')[0]}.`:"Let's go.",{prio:2,ttl:15000});
   persistActive();beginRunning()}
 function persistActive(){if(!sess)return;Store.set('active',{sess,endForm,ending,profileId:S.profileId,routeId:sess.routeId,saved:Date.now()})}
 function resumeActive(a,thenEnd){pendingResume=null;
@@ -218,7 +267,7 @@ function resumeActive(a,thenEnd){pendingResume=null;
   sess=Object.assign(newSession(),a.sess);endForm=a.endForm||{feel:0,notes:''};
   const gap=Date.now()-(a.saved||Date.now());if(gap>60000&&!thenEnd)sess.start+=gap;   // don't count time the app was closed
   lastAccepted=sess.track.length?{ll:sess.track[sess.track.length-1],t:Date.now()}:null;
-  trackLine.setLatLngs(sess.track);flagLayer.clearLayers();flagMarkers.clear();
+  trackLine.setLatLngs(trackSegments(sess.track,sess.breaks));flagLayer.clearLayers();flagMarkers.clear();
   sess.flags.forEach(f=>flagMarkers.set(f.t,L.marker(f.ll,{icon:flagIcon(FLAGS[f.label]?.good)}).bindTooltip(esc(f.label)).addTo(flagLayer)));
   ending=!!thenEnd||!!a.ending;tab='drive';syncTabs();beginRunning();if(!thenEnd)toast('Lesson resumed')}
 function markDone(c,auto){if(!sess||!c||sess.done.includes(c.id))return;sess.done.push(c.id);sess.nextDist=null;beep(880,.45,2);
@@ -237,7 +286,9 @@ function finishSession(keep){
   if(keep){const r=route();
     S.sessions.unshift({id:sess.id,start:sess.start,end:Date.now(),routeId:r.id,routeName:r.name,stage:r.stage,km:+sess.km.toFixed(2),maxKmh:Math.round(sess.maxKmh),
       done:sess.done.length,total:placedCps(r.cps).length,feel:endForm.feel,notes:endForm.notes.trim(),
-      track:thinTrack(sess.track).map(p=>[+p[0].toFixed(5),+p[1].toFixed(5)]),flags:sess.flags.map(f=>({ll:f.ll,label:f.label,t:f.t,...(f.auto?{auto:true,limit:f.limit}:{})})),
+      ...(()=>{const segs=trackSegments(sess.track,sess.breaks),k=Math.max(1,Math.ceil(sess.track.length/1500)),track=[],breaks=[];
+        segs.forEach((sg,i)=>{if(i)breaks.push(track.length);sg.forEach((p,j)=>{if(j%k===0||j===sg.length-1)track.push([+p[0].toFixed(5),+p[1].toFixed(5)])})});
+        return {track,breaks,gaps:(sess.gaps||[]).map(g=>({ms:g.to-g.from,a:g.a.map(v=>+v.toFixed(5)),b:g.b.map(v=>+v.toFixed(5))}))}})(),flags:sess.flags.map(f=>({ll:f.ll,label:f.label,t:f.t,...(f.auto?{auto:true,limit:f.limit}:{})})),
       plan:r.path&&r.path.key===pathKey(placedCps(r.cps).map(c=>[c.lat,c.lng]))?thinTrack(r.path.g,600):null,
       cps:r.cps.map((c,i)=>({n:i+1,name:c.name,task:c.task,done:sess.done.includes(c.id),ll:c.lat!=null?[+c.lat.toFixed(5),+c.lng.toFixed(5)]:null})).filter(c=>c.ll)});
     reportView=sess.id;save();Store.flush();toast('Lesson saved to the log')}
@@ -346,6 +397,8 @@ function settingsBlock(){const t=(id,label,on,sub='')=>`<label class="toggle"><s
     ${t('setVoice','Voice prompts',S.settings.voice,'Reads out the next checkpoint and its task')}
     ${t('setSpeed','Speed limit warnings',S.settings.speedAlerts,'Beeps and says the limit when 6+ km/h over')}
     ${t('setAutoMark','Auto-mark speeding',S.settings.autoSpeedMarks,'Adds "Too fast" to the report, once a minute at most')}
+    ${t('setAutoChecks','Auto-detect rolling stops and hard braking',S.settings.autoChecks,'Marks them on the report by itself')}
+    ${t('setSpots','Problem spot heads-up',S.settings.spotWarnings,'Voice warning near places she made the same mistake before')}
     ${t('setChecklist','Pre-drive checklist',S.settings.checklist,'Alberta Class 7 reminders before each lesson')}</div></details>`}
 
 function renderOnboard(){const p=prof();
@@ -402,12 +455,30 @@ function renderDrive(){const r=route(),placed=placedCps(r.cps).length;
      <div class="small muted">Pins tick off by themselves within ${ARRIVE_M} m, in any order. You navigate, she only drives.</div>
      ${settingsBlock()}`}
 
-function destCard(){
-  return `<div class="card"><h3>Drive to a place</h3>
-   <div class="row nowrap"><input type="text" id="destQ" placeholder="Address or place" aria-label="Destination" enterkeyhint="search" autocomplete="off"><button class="btn" id="destGo" ${planning?'disabled':''}>${planning?'Planning…':'Find'}</button></div>
-   ${destResults.length?`<div class="stack">${destResults.map((p,i)=>`<button class="entry" data-dest="${i}"><div class="top"><span>${esc(p.name)}</span></div><div class="meta">${esc(p.addr)}</div></button>`).join('')}</div>`:''}
-   <div class="row" style="justify-content:space-between"><button class="btn small" id="destPick">Pick on the map</button>${S.routes.some(x=>x.id===DRIVE_ID)&&route().id!==DRIVE_ID?`<button class="btn small" data-goroute="${DRIVE_ID}">Last A → B route</button>`:''}</div>
-   <div class="small muted">Plans the fastest route from where you are. Every stop sign, set of lights, turn, roundabout, merge and playground zone on the way becomes a checkpoint, with turn-by-turn voice. Re-plans if you leave the route.</div></div>`}
+let planMode='go',loopMin=20,testMin=30,loopStart=null,testStart=null,editPlaces=false;
+const placeChips=(act,sel)=>editPlaces&&S.places.length?`<div class="stack">${S.places.map(p=>`<div class="row nowrap"><input type="text" id="pl_${p.id}" data-placename="${p.id}" value="${esc(p.name)}" aria-label="Place name"><button class="btn small danger" data-delplace="${p.id}" aria-label="Remove ${esc(p.name)}">✕</button></div>`).join('')}</div>`:S.places.length?`<div class="chips">${S.places.map(p=>`<span class="chip place ${sel&&sel.id===p.id?'on':''}"><button data-${act}="${p.id}">★ ${esc(p.name)}</button>${editPlaces?`<button class="x" data-delplace="${p.id}" aria-label="Remove ${esc(p.name)}">✕</button>`:''}</span>`).join('')}</div>`:'';
+function destCard(){const mode=b=>`<button class="chip" data-pm="${b}" aria-pressed="${planMode===b}">${{go:'Go to a place',loop:'Practice loop',test:'Road test'}[b]}</button>`;
+  const lens=(cur,key,opts)=>`<div class="chips">${opts.map(m=>`<button class="chip" data-${key}="${m}" aria-pressed="${cur===m}">${m} min</button>`).join('')}</div>`;
+  const results=destResults.length?`<div class="stack">${destResults.map((p,i)=>`<div class="entry row nowrap" style="justify-content:space-between"><button class="grow" style="all:unset;cursor:pointer;min-width:0" data-dest="${i}"><div class="top"><span>${esc(p.name)}</span></div><div class="meta">${esc(p.addr)}</div></button><button class="btn small" data-saveres="${i}" aria-label="Save ${esc(p.name)}">☆ Save</button></div>`).join('')}</div>`:'';
+  const placesRow=act=>`${placeChips(act,act==='loopfrom'?loopStart:act==='testfrom'?testStart:null)}<div class="row"><button class="btn small" id="saveHere">☆ Save where I am</button>${S.places.length?`<button class="btn small" id="editPlaces">${editPlaces?'Done':'Edit places'}</button>`:''}</div>`;
+  let body='';
+  if(planMode==='go')body=`${placesRow('goplace')}
+    <div class="row nowrap"><input type="text" id="destQ" placeholder="Address or place" aria-label="Destination" enterkeyhint="search" autocomplete="off"><button class="btn" id="destGo" ${planning?'disabled':''}>${planning?'Planning…':'Find'}</button></div>${results}
+    <div class="row" style="justify-content:space-between"><button class="btn small" id="destPick">Pick on the map</button>${S.routes.some(x=>x.id===DRIVE_ID)&&route().id!==DRIVE_ID?`<button class="btn small" data-goroute="${DRIVE_ID}">Last A → B route</button>`:''}</div>
+    <div class="small muted">Fastest route from where you are. Every stop sign, set of lights, turn, roundabout, merge and playground zone on the way becomes a checkpoint, with turn-by-turn voice.</div>`;
+  else if(planMode==='loop')body=`<div class="small"><b>Start:</b> ${loopStart?esc(loopStart.name):'where you are'}${loopStart?' <button class="btn small" id="loopHere">Use my location</button>':''}</div>${placesRow('loopfrom')}
+    ${lens(loopMin,'loopmin',[10,20,30,45])}<div class="small">Focus from her skill board: <b>${esc(focusLine('loop',loopMin))}</b></div>
+    <button class="btn primary" id="buildLoop" ${planning?'disabled':''}>${planning?'Building…':'Build loop'}</button>
+    <div class="small muted">A round trip that passes the spots she needs most. Tap again for a different loop.</div>`;
+  else body=`<div class="small"><b>Test location:</b> ${testStart?esc(testStart.name):'pick a registry or address'}</div>${placesRow('testfrom')}
+    <div class="row nowrap"><input type="text" id="testQ" placeholder="Registry name or address" aria-label="Road test location" enterkeyhint="search" autocomplete="off"><button class="btn" id="testGo">Find</button></div>
+    ${testResults.length?`<div class="stack">${testResults.map((p,i)=>`<button class="entry" data-testres="${i}"><div class="top"><span>${esc(p.name)}</span></div><div class="meta">${esc(p.addr)}</div></button>`).join('')}</div>`:''}
+    ${lens(testMin,'testmin',[20,30,45])}
+    <button class="btn primary" id="buildTest" ${planning||!testStart?'disabled':''}>${planning?'Building…':'Build test loop'}</button>
+    <div class="small muted">Starts and ends at the test location and mixes what examiners look for: stop signs, lights and left turns, playground zones, a roundabout if there's one, and parallel and hill parking on a quiet street.</div>`;
+  return `<div class="card"><h3>Plan a drive</h3><div class="chips">${mode('go')}${mode('loop')}${mode('test')}</div>${body}</div>`}
+let testResults=[];
+async function testSearch(q){q=q.trim();if(!q)return;try{testResults=await OSM.search(q,map.getBounds().pad(3));if(!testResults.length)toast('No matches. Try the street address.');render()}catch(e){toast('Search failed. Check the connection.')}}
 function renderDriving(){const r=route(),nx=nextTarget(r.cps,sess.done),placed=placedCps(r.cps).length;
   return `${navBanner()}<div class="dhud"><div class="spd" id="hSpd"><b id="hSpeed">0</b><span>km/h</span></div>
      <div class="limit" id="hLimit" hidden aria-label="Speed limit"></div>
@@ -483,7 +554,7 @@ function trendChart(){const ser=mistakeSeries(S.sessions).slice(-12);if(ser.leng
 const stageOf=s=>s.stage||(S.routes.find(r=>r.id===s.routeId)||{}).stage||'Custom';
 function renderLog(){const stages=[...new Set(S.sessions.map(stageOf))].sort();if(logFilter!=='all'&&!stages.includes(logFilter))logFilter='all';
   const ss=S.sessions.filter(s=>logFilter==='all'||stageOf(s)===logFilter),hrs=ss.reduce((a,s)=>a+hours(s),0),km=ss.reduce((a,s)=>a+s.km,0);
-  return `${profileCard()}${backupNudge()}${trendChart()}
+  return `${profileCard()}${backupNudge()}${trendChart()}${spotsCard()}
    ${stages.length>1?`<div class="chips">${['all',...stages].map(x=>`<button class="chip" data-lf="${esc(x)}" aria-pressed="${logFilter===x}">${x==='all'?'All':esc(x)}</button>`).join('')}</div>`:''}
    <div class="sum">${gauge(ss.length,'Lessons')}${gauge(hrs.toFixed(1),'Hours')}${gauge(km.toFixed(0),'Km')}</div>
    ${ss.length?ss.map(s=>`<div class="entry"><div class="top"><span>${esc(s.routeName)}</span><span>${FEEL[s.feel]||''}</span></div>
@@ -498,7 +569,14 @@ function dropSessions(ids){const gone=S.sessions.filter(s=>ids.includes(s.id));S
 /* render() keeps scroll position and open skill cards between redraws */
 const scrollMem={};let lastKey=null;const openCards=new Set();
 function viewKey(){return reportView?'report':lotPick?'lots':tab+(tab==='drive'?(sess?(ending?':end':expanded?':full':':drv'):prestart?':pre':''):'')}
-function render(){if(!S)return;
+let spotLayer=null;
+function drawSpots(){if(!map)return;if(!spotLayer)spotLayer=L.layerGroup().addTo(map);spotLayer.clearLayers();
+  problemSpots(S.sessions).forEach(sp=>L.marker(sp.ll,{icon:L.divIcon({className:'',iconSize:[26,26],iconAnchor:[13,13],html:'<div class="spot"><span>!</span></div>'}),keyboard:false})
+    .bindTooltip(`${esc(sp.label)} · ${sp.count}× in ${sp.lessons} lessons`,{direction:'top',offset:[0,-12]}).addTo(spotLayer))}
+function spotsCard(){const ps=problemSpots(S.sessions);if(!ps.length)return '';
+  return `<div class="card"><h3>Problem spots</h3><div class="small muted">Same mistake at the same place in 2+ lessons. Shown on the map with an orange marker; the voice gives a heads-up as she approaches.</div>
+   ${ps.slice(0,6).map((sp,i)=>`<div class="row nowrap" style="justify-content:space-between"><div class="small"><b>${esc(sp.label)}</b> · ${sp.count}× in ${sp.lessons} lessons</div><button class="btn small" data-showspot="${i}">Show</button></div>`).join('')}</div>`}
+function render(){if(!S)return;drawSpots();
   if(lastKey){scrollMem[lastKey]=pane.scrollTop;if(lastKey==='skills')pane.querySelectorAll('details.coach').forEach(d=>d.open?openCards.add(d.dataset.k):openCards.delete(d.dataset.k))}
   const key=viewKey();
   appEl.classList.toggle('driving',!!sess&&!ending&&!expanded&&tab==='drive'&&!reportView);
@@ -525,9 +603,25 @@ function restore(file){const rd=new FileReader();
 
 /* ---------- events ---------- */
 function confirmTap(t,label){if(t.dataset.sure)return true;t.dataset.sure=1;t.textContent=label;setTimeout(()=>{if(t.isConnected){delete t.dataset.sure;render()}},4000);return false}
-pane.addEventListener('click',e=>{const pt=e.target.closest('[data-pt]');if(pt){chartSel=+pt.dataset.pt===chartSel?null:+pt.dataset.pt;return render()}
+pane.addEventListener('click',async e=>{const pt=e.target.closest('[data-pt]');if(pt){chartSel=+pt.dataset.pt===chartSel?null:+pt.dataset.pt;return render()}
   const t=e.target.closest('button');if(!t)return;const r=route(),d=t.dataset,id=t.id;
   // lesson
+  if(d.pm){planMode=d.pm;destResults=[];return render()}
+  if(d.loopmin){loopMin=+d.loopmin;return render()}
+  if(d.testmin){testMin=+d.testmin;return render()}
+  if(d.goplace){const p=S.places.find(x=>x.id===d.goplace);return p&&planDriveTo({name:p.name,ll:p.ll})}
+  if(d.loopfrom){const p=S.places.find(x=>x.id===d.loopfrom);loopStart=loopStart&&loopStart.id===p.id?null:p;return render()}
+  if(d.testfrom){testStart=S.places.find(x=>x.id===d.testfrom);testResults=[];return render()}
+  if(id==='loopHere'){loopStart=null;return render()}
+  if(id==='buildLoop')return planLoop({start:loopStart&&loopStart.ll,startName:loopStart&&loopStart.name,minutes:loopMin,mode:'loop'});
+  if(id==='buildTest')return testStart&&planLoop({start:testStart.ll,startName:testStart.name,minutes:testMin,mode:'test'});
+  if(id==='testGo')return testSearch(document.getElementById('testQ').value);
+  if(d.testres!=null){const p=testResults[+d.testres];testStart={id:'tmp',name:p.name,ll:p.ll};testResults=[];return render()}
+  if(d.saveres!=null){const p=destResults[+d.saveres];S.places.push({id:uid(),name:p.name,ll:p.ll});save();toast(`Saved “${p.name}” to your places`);return render()}
+  if(id==='saveHere'){const ll=await myPosition();if(!ll)return toast('No GPS fix yet');S.places.push({id:uid(),name:S.places.length?'Place '+(S.places.length+1):'Home',ll});editPlaces=true;save();toast('Saved. Rename it below.');return render()}
+  if(id==='editPlaces'){editPlaces=!editPlaces;return render()}
+  if(d.delplace){const i=S.places.findIndex(x=>x.id===d.delplace),p=S.places[i];S.places.splice(i,1);save();render();return toast(`Removed ${p.name}`,{action:()=>{S.places.splice(i,0,p);save();render()}})}
+  if(d.showspot){const sp=problemSpots(S.sessions)[+d.showspot];if(sp){map.setView(sp.ll,17);toast(`${sp.label}: ${sp.count}× in ${sp.lessons} lessons`)}return}
   if(id==='destGo')return destSearch(document.getElementById('destQ').value);
   if(d.dest!=null)return planDriveTo(destResults[+d.dest]);
   if(id==='destPick'){pickingDest=true;setPlacing(true,'Tap the map where you want to drive to');return toast('Tap the destination on the map')}
@@ -587,7 +681,7 @@ pane.addEventListener('click',e=>{const pt=e.target.closest('[data-pt]');if(pt){
     S.sessions=dd.sessions;S.skills=dd.skills;delete S.pdata[nx];S.profileId=nx;editingProfile=false;save();toast('Profile deleted');return render()}
   if(d.delsess){if(confirmTap(t,'Tap again'))dropSessions([d.delsess]);return}
   if(id==='clearLog'){if(confirmTap(t,'Tap again to delete them all')){const ids=S.sessions.filter(s=>logFilter==='all'||stageOf(s)===logFilter).map(s=>s.id);logFilter='all';dropSessions(ids)}return}
-  if(d.sess){const s=S.sessions.find(s=>s.id===d.sess);histLayer.clearLayers();if(s.track?.length){const pl=L.polyline(s.track,{color:'#7A4FD6',weight:5,opacity:.85}).addTo(histLayer);
+  if(d.sess){const s=S.sessions.find(s=>s.id===d.sess);histLayer.clearLayers();if(s.track?.length){const pl=L.polyline(trackSegments(s.track,s.breaks),{color:'#7A4FD6',weight:5,opacity:.85}).addTo(histLayer);(s.gaps||[]).forEach(g=>L.polyline([g.a,g.b],{color:'#8A958E',weight:3,dashArray:'4 8'}).addTo(histLayer));
     (s.flags||[]).forEach(f=>L.marker(f.ll,{icon:flagIcon(FLAGS[f.label]?.good)}).bindTooltip(esc(f.label)).addTo(histLayer));
     map.fitBounds(pl.getBounds(),{padding:[30,30]})}else toast('No GPS track saved for this lesson');return}
   // report
@@ -603,18 +697,19 @@ pane.addEventListener('change',e=>{const t=e.target;
   if(t.id==='areaSel')return goArea(t.value);
   if(t.id==='pfSel')return switchProfile(t.value);
   if(t.id==='routeSel'){if(sess)return toast('End the lesson before switching routes'),render();S.activeRouteId=t.value;save();histLayer.clearLayers();drawRoute();fitRoute();return render()}
-  const set={setVoice:'voice',setSpeed:'speedAlerts',setAutoMark:'autoSpeedMarks',setChecklist:'checklist'}[t.id];
+  const set={setVoice:'voice',setSpeed:'speedAlerts',setAutoMark:'autoSpeedMarks',setChecklist:'checklist',setAutoChecks:'autoChecks',setSpots:'spotWarnings'}[t.id];
   if(set){S.settings[set]=t.checked;save();if(set==='voice'){syncVoiceBtn();if(t.checked){unlockAudio();say('Voice prompts on')}}if(set==='speedAlerts'&&!t.checked)lim.cur=null}
 });
 pane.addEventListener('input',e=>{const t=e.target,r=route();
   if(t.id==='endNotes'){endForm.notes=t.value;return}
   const pf={pfName:'name',pfSince:'since',pfTest:'testDate',pfGoal:'goalHours'}[t.id];if(pf){prof()[pf]=t.value;save();return}
+  if(t.dataset.placename){const p=S.places.find(x=>x.id===t.dataset.placename);if(p){p.name=t.value;save()}return}
   if(t.id==='rName'){r.name=t.value;save();return}
   if(t.id==='rStage'){r.stage=t.value;save();return}
   if(t.id==='rGoal'){r.goal=t.value;save();return}
   if(t.dataset.cp){const c=r.cps.find(c=>c.id===t.dataset.cp);c[t.dataset.f]=t.value;save();drawRoute()}
 });
-pane.addEventListener('keydown',e=>{if(e.key!=='Enter')return;if(e.target.id==='placeQ'){e.preventDefault();placeSearch(e.target.value)}if(e.target.id==='destQ'){e.preventDefault();destSearch(e.target.value)}});
+pane.addEventListener('keydown',e=>{if(e.key!=='Enter')return;if(e.target.id==='placeQ'){e.preventDefault();placeSearch(e.target.value)}if(e.target.id==='destQ'){e.preventDefault();destSearch(e.target.value)}if(e.target.id==='testQ'){e.preventDefault();testSearch(e.target.value)}});
 document.getElementById('importFile').onchange=e=>{const f=e.target.files[0];if(f)restore(f);e.target.value=''};
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;reportView=null;prestart=false;if(lotPick)cancelLotPick();syncTabs();if(tab!=='routes')setPlacing(false);render()});
 document.getElementById('locBtn').onclick=e=>{if(!ensureWatch())return;follow=!follow;e.currentTarget.setAttribute('aria-pressed',follow);if(follow&&lastFix)map.setView(lastFix.ll,17)};

@@ -199,3 +199,12 @@ details.settings summary{cursor:pointer;font:800 13px/1.2 var(--display);text-tr
 .navbar .nicon{font:900 36px/1 var(--display);width:40px;text-align:center}
 .navbar .nd{font:700 22px/1.1 var(--mono);font-variant-numeric:tabular-nums}
 .navbar .nt{font-weight:700;font-size:15px;line-height:1.25}
+
+/* saved places, problem spots */
+.chip.place{display:inline-flex;align-items:center;gap:2px;padding:0}
+.chip.place button{border:0;background:none;color:inherit;font:inherit;padding:7px 12px}
+.chip.place.on{background:var(--sign);color:var(--sign-ink);border-color:var(--sign)}
+.chip.place .x{padding:7px 10px 7px 2px;color:var(--stop)}
+.spot{width:26px;height:26px;border-radius:6px;transform:rotate(45deg);background:#E8710A;border:2px solid #fff;display:grid;place-items:center;box-shadow:0 1px 4px rgb(0 0 0/.4)}
+.spot{font:900 15px/1 var(--display);color:#fff}
+.spot span{transform:rotate(-45deg)}

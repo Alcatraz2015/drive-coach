@@ -43,7 +43,8 @@ async function buildReport(s,tilesOn=true){
       await Promise.all(jobs)}
     else{c.strokeStyle='#D9E1DB';c.lineWidth=1;for(let gx=mx;gx<mx+mw;gx+=60){c.beginPath();c.moveTo(gx,my);c.lineTo(gx,my+mh);c.stroke()}for(let gy=my;gy<my+mh;gy+=60){c.beginPath();c.moveTo(mx,gy);c.lineTo(mx+mw,gy);c.stroke()}}
     const plan=s.plan&&s.plan.length>1?s.plan:cps.length>1?cps.map(p=>p.ll):null;if(plan){c.setLineDash([10,10]);c.strokeStyle=RC.caution;c.lineWidth=4;c.beginPath();plan.forEach((p,i)=>{const q=toC(p);i?c.lineTo(...q):c.moveTo(...q)});c.stroke();c.setLineDash([])}
-    if(s.track?.length>1){c.lineJoin=c.lineCap='round';c.strokeStyle='#fff';c.lineWidth=11;c.beginPath();s.track.forEach((p,i)=>{const q=toC(p);i?c.lineTo(...q):c.moveTo(...q)});c.stroke();
+    if(s.track?.length>1){c.lineJoin=c.lineCap='round';(s.gaps||[]).forEach(g=>{c.setLineDash([6,10]);c.strokeStyle='#8A958E';c.lineWidth=4;c.beginPath();c.moveTo(...toC(g.a));c.lineTo(...toC(g.b));c.stroke();c.setLineDash([])});
+      c.beginPath();trackSegments(s.track,s.breaks).forEach(sg=>sg.forEach((p,i)=>{const q=toC(p);i?c.lineTo(...q):c.moveTo(...q)}));c.strokeStyle='#fff';c.lineWidth=11;c.stroke();
       c.strokeStyle=RC.track;c.lineWidth=6;c.stroke();const st0=toC(s.track[0]),en=toC(s.track[s.track.length-1]);
       pinDot(c,...st0,'S',RC.ink,'#fff',13);pinDot(c,...en,'F',RC.ink,'#fff',13)}
     cps.forEach(p=>pinDot(c,...toC(p.ll),p.n,p.done?RC.ok:RC.caution,p.done?'#fff':'#1D1600'));
@@ -56,6 +57,8 @@ async function buildReport(s,tilesOn=true){
   // legend
   c.font=fnt(400,18,'b');let lx=P;
   [[RC.track,'Route driven'],[RC.ok,'Checkpoint reached'],[RC.caution,'Planned route / missed pin'],[RC.stop,'Mistake mark']].forEach(([col,t])=>{c.fillStyle=col;rrect(c,lx,y-14,18,18,4);c.fill();c.fillStyle=RC.muted;c.fillText(t,lx+26,y);lx+=c.measureText(t).width+60});
+  if(s.gaps&&s.gaps.length){y+=34;c.fillStyle=RC.muted;c.font=fnt(400,18,'b');const tot=s.gaps.reduce((a,g)=>a+g.ms,0);
+    c.fillText(`Tracking paused ${s.gaps.length}× (${fmtDur(tot)} total), shown as grey dashes. Keep the app on screen while driving.`,P,y)}
   y+=50;
   const H=t=>{c.fillStyle=RC.sign;c.font=fnt(900,30,'d');c.fillText(t,P,y);y+=14;c.fillStyle=RC.line;c.fillRect(P,y,W-2*P,3);y+=36};
   // mistakes
