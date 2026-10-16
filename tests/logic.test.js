@@ -205,3 +205,11 @@ test('speed limit sign only changes after 3 fixes agree',()=>{
   assert.equal(L.stickyLimit(st,b).kmh,110);assert.equal(L.stickyLimit(st,a).kmh,110);   // one stray reading
   L.stickyLimit(st,b);L.stickyLimit(st,b);assert.equal(L.stickyLimit(st,b).kmh,100);
 });
+
+test('out-and-back stretches are found and split to the right of travel',()=>{
+  const g=[[51,-114],[51.001,-114],[51.002,-114],[51.003,-114],[51.003,-113.999],[51.002,-113.99995],[51.001,-113.99995],[51,-113.99995]];
+  const m=L.overlapMask(g);assert.ok(m[1]&&m[2]&&m[5]&&m[6]);
+  const once=[[51,-114],[51.001,-114],[51.002,-114],[51.003,-114]];assert.ok(L.overlapMask(once).every(x=>!x));
+  // screen coords: heading east (+x) the right-hand side is +y (screen y points down)
+  assert.deepEqual(L.offsetPoints([[0,0],[10,0],[20,0]],[0,5,0]),[[0,0],[10,5],[20,0]]);
+});

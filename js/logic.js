@@ -315,8 +315,23 @@ function uTurns(g){const out=[];if(!g||g.length<3)return out;
     if(angDiff(bearing(g[a],g[i]),bearing(g[i],g[b]))>=150&&!out.some(o=>hav(o.ll,g[i])<40))out.push({i,ll:g[i]})}
   return out}
 
+/* Which points of a path sit on a stretch that the path also drives the other way (out and back on the same road).
+   Uses a coarse grid so long routes stay fast. */
+function overlapMask(g,near=15){const n=g.length,mask=new Array(n).fill(false);if(n<4)return mask;
+  const C=0.0003,cell=p=>Math.floor(p[0]/C)+'_'+Math.floor(p[1]/C),grid=new Map(),seg=[];
+  for(let i=0;i<n-1;i++){const m=[(g[i][0]+g[i+1][0])/2,(g[i][1]+g[i+1][1])/2];seg.push({m,b:bearing(g[i],g[i+1]),len:hav(g[i],g[i+1])});
+    const k=cell(m);(grid.get(k)||grid.set(k,[]).get(k)).push(i)}
+  for(let i=0;i<n-1;i++){if(seg[i].len<1)continue;const [a,b]=[Math.floor(seg[i].m[0]/C),Math.floor(seg[i].m[1]/C)];
+    for(let da=-1;da<=1&&!mask[i+1];da++)for(let db=-1;db<=1;db++){for(const j of grid.get((a+da)+'_'+(b+db))||[]){
+      if(Math.abs(i-j)<3||seg[j].len<1)continue;if(angDiff(seg[i].b,seg[j].b)>150&&hav(seg[i].m,seg[j].m)<=near){mask[i]=mask[i+1]=true;break}}}}
+  return mask}
+/* Shift points (screen pixels [x,y]) sideways to the right of travel by mags[i] px; Canada drives on the right. */
+function offsetPoints(pts,mags){return pts.map((p,i)=>{const m=mags[i];if(!m)return p;
+  const a=pts[Math.max(0,i-1)],b=pts[Math.min(pts.length-1,i+1)];let dx=b[0]-a[0],dy=b[1]-a[1];const L2=Math.hypot(dx,dy)||1;dx/=L2;dy/=L2;
+  return [p[0]-dy*m,p[1]+dx*m]})}
+
 const API={uid,esc,hav,bearing,angDiff,fmtDur,fmtDist,stageNum,median,GPS,acceptFix,smoothSpeed,thinTrack,placedCps,arrivals,nextTarget,skippedCps,
   skillPct,hours,badFlags,mistakeSeries,topMistakes,suggestNext,curfew,testEligibleFrom,parseMaxspeed,inBox,segDist,limitAt,
-  uTurns,roadAt,stickyLimit,isOneway,playZoneRoad,SAY,speakable,stopCheck,hardBrake,problemSpots,HEADS_UP,focusWeights,pickLoopTargets,trackSegments,LOOP_SKILLS,pathArrows,cumDist,projectOnPath,instruction,maneuvers,planDrive,spotSummary,SPOTS,polyArea,cluster,carLot,parseFeatures,rankLots,lotPins,walkRamp,buildStage};
+  overlapMask,offsetPoints,uTurns,roadAt,stickyLimit,isOneway,playZoneRoad,SAY,speakable,stopCheck,hardBrake,problemSpots,HEADS_UP,focusWeights,pickLoopTargets,trackSegments,LOOP_SKILLS,pathArrows,cumDist,projectOnPath,instruction,maneuvers,planDrive,spotSummary,SPOTS,polyArea,cluster,carLot,parseFeatures,rankLots,lotPins,walkRamp,buildStage};
 if(typeof module!=='undefined')module.exports=API;else Object.assign(root,API);
 })(typeof window!=='undefined'?window:globalThis);

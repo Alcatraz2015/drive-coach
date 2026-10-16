@@ -39,20 +39,45 @@ function toast(msg,opt={}){document.querySelector('.toast')?.remove();const d=do
 let map,cpLayer,histLayer,flagLayer,lotLayer,trackLine,carMarker=null,accCircle=null;
 const dark=matchMedia('(prefers-color-scheme: dark)');
 const isDark=()=>{const t=document.documentElement.dataset.theme;return t?t==='dark':dark.matches};
+/* Base map: OpenFreeMap vector tiles (small, fast, sharp, real dark style, allows preloading along a route).
+   Falls back to OpenStreetMap raster tiles if WebGL isn't available or the vector style doesn't load. */
+const VSTYLE={light:'https://tiles.openfreemap.org/styles/liberty',dark:'https://tiles.openfreemap.org/styles/dark'};
+const VATTR='<a href="https://openfreemap.org" target="_blank">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org/" target="_blank">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>';
+let baseLayer=null,baseVector=false,vectorFailed=false;
+function webgl(){try{const c=document.createElement('canvas');return !!(c.getContext('webgl2')||c.getContext('webgl'))}catch(e){return false}}
+function addBaseMap(){const want=isDark()?'dark':'light';
+  if(baseLayer&&baseVector&&baseLayer._dcStyle===want)return;
+  if(baseLayer){map.removeLayer(baseLayer);baseLayer=null}
+  if(!vectorFailed&&L.maplibreGL&&window.maplibregl&&webgl()){try{
+      baseLayer=L.maplibreGL({style:VSTYLE[want],attribution:VATTR,interactive:false}).addTo(map);baseLayer._dcStyle=want;baseVector=true;
+      document.getElementById('map').classList.remove('darkmap');
+      const gl=baseLayer.getMaplibreMap();let ok=false;gl.once('load',()=>{ok=true;if(route().path)preloadPath(route().path.g)});
+      setTimeout(()=>{if(!ok){vectorFailed=true;addBaseMap();toast('Using the backup map (vector map didn\'t load)')}},10000);return}catch(e){vectorFailed=true}}
+  baseVector=false;baseLayer=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,keepBuffer:3,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(map);
+  document.getElementById('map').classList.toggle('darkmap',isDark())}
+/* Download the vector map along a route ahead of time (z12–14, ±400 m corridor, max 600 tiles, 4 at a time). Within OpenFreeMap's offline limits. */
+let tileJsonP=null;const preloaded=new Set();
+async function preloadPath(g){if(!baseVector||!g||g.length<2)return;const key=g.length+':'+g[0]+':'+g[g.length-1];if(preloaded.has(key))return;preloaded.add(key);
+  try{tileJsonP=tileJsonP||fetch('https://tiles.openfreemap.org/planet').then(r=>r.json());const tpl=(await tileJsonP).tiles[0];
+    const want=new Set(),t=(lat,lng,z)=>{const n=2**z,x=Math.floor((lng+180)/360*n),la=lat*Math.PI/180,y=Math.floor((1-Math.log(Math.tan(la)+1/Math.cos(la))/Math.PI)/2*n);return z+'/'+x+'/'+y};
+    let last=null;for(const p of g){if(last&&hav(last,p)<150)continue;last=p;
+      for(const z of [12,13,14])for(const [dy,dx] of [[0,0],[1,0],[-1,0],[0,1],[0,-1]]){const o=z===14?0.0036:0;want.add(t(p[0]+dy*o,p[1]+dx*o*1.6,z))}}
+    const list=[...want].slice(0,600);let i=0;
+    await Promise.all([0,1,2,3].map(async()=>{while(i<list.length){const [z,x,y]=list[i++].split('/');try{await fetch(tpl.replace('{z}',z).replace('{x}',x).replace('{y}',y))}catch(e){}}}))}
+  catch(e){preloaded.delete(key)}}
 function initMap(){
   map=L.map('map',{zoomControl:false,attributionControl:true}).setView(curArea().c,curArea().z);
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(map);
-  const theme=()=>document.getElementById('map').classList.toggle('darkmap',isDark());theme();dark.addEventListener?.('change',()=>{theme();drawRoute()});
+  addBaseMap();dark.addEventListener?.('change',()=>{addBaseMap();drawRoute()});
   cpLayer=L.layerGroup().addTo(map);histLayer=L.layerGroup().addTo(map);flagLayer=L.layerGroup().addTo(map);lotLayer=L.layerGroup().addTo(map);
   trackLine=L.polyline([],{color:'#2F7DE1',weight:5,opacity:.85}).addTo(map);
   map.on('click',onMapClick);
-  map.on('zoomend',()=>arrowPath&&drawArrows(arrowPath));
+  map.on('zoomend',()=>curPathG&&drawPathLines(curPathG));
   map.on('dragstart',()=>{userPanAt=Date.now();if(follow){follow=false;document.getElementById('locBtn').setAttribute('aria-pressed','false')}});
 }
 const carIcon=h=>L.divIcon({className:'',iconSize:[40,40],iconAnchor:[20,20],html:`<div class="car" style="transform:rotate(${h||0}deg)"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="13" fill="#2F7DE1" stroke="#fff" stroke-width="3"/><path d="M20 10l6 14-6-3.5-6 3.5z" fill="#fff"/></svg></div>`});
 const flagIcon=good=>L.divIcon({className:'',iconSize:[22,22],iconAnchor:[11,11],html:`<div class="flag" style="${good?'background:var(--ok)':''}">${good?'★':'!'}</div>`});
 function drawRoute(){
-  cpLayer.clearLayers();signLayer&&signLayer.clearLayers();arrowLayer&&arrowLayer.clearLayers();arrowPath=null;const r=route(),pts=[],nx=sess?nextTarget(r.cps,sess.done):null,skipped=sess?skippedCps(r.cps,sess.done).map(c=>c.id):[];
+  cpLayer.clearLayers();pathLayer&&pathLayer.clearLayers();curPathG=null;signLayer&&signLayer.clearLayers();arrowLayer&&arrowLayer.clearLayers();arrowPath=null;const r=route(),pts=[],nx=sess?nextTarget(r.cps,sess.done):null,skipped=sess?skippedCps(r.cps,sess.done).map(c=>c.id):[];
   r.cps.forEach((c,i)=>{if(c.lat==null)return;pts.push([c.lat,c.lng]);
     const done=sess&&sess.done.includes(c.id);
     const m=L.marker([c.lat,c.lng],{draggable:!sess,icon:L.divIcon({className:'',iconSize:[30,30],iconAnchor:[15,15],
@@ -61,7 +86,7 @@ function drawRoute(){
     m.on('dragend',e=>{const p=e.target.getLatLng();c.lat=+p.lat.toFixed(6);c.lng=+p.lng.toFixed(6);save();drawRoute()});
   });
   if(pts.length>1){const col=isDark()?'#F2C53D':'#B88600',k=pathKey(pts);
-    if(r.path&&r.path.key===k){L.polyline(r.path.g,{color:'#fff',weight:7,opacity:.7}).addTo(cpLayer);L.polyline(r.path.g,{color:col,weight:4,dashArray:'8 7'}).addTo(cpLayer);drawArrows(r.path.g);
+    if(r.path&&r.path.key===k){drawPathLines(r.path.g);preloadPath(r.path.g);
       drawRouteSigns(r);
       if(!r.nav)uTurns(r.path.g).forEach(u=>L.marker(u.ll,{icon:L.divIcon({className:'',iconSize:[28,28],iconAnchor:[14,14],html:'<div class="uturn" title="Turnaround">↶</div>'}),interactive:false}).addTo(cpLayer))}
     else{L.polyline(pts,{color:col,weight:3,dashArray:'2 8',opacity:.8}).addTo(cpLayer);queuePath(r,pts,k)}}
@@ -86,10 +111,22 @@ async function drawRouteSigns(r){if(!signLayer)signLayer=L.layerGroup().addTo(ma
   list.filter(sg=>!pins.some(c=>SIGN_KIND[c.kind]===sg.k&&hav([c.lat,c.lng],sg.ll)<40)).forEach(sg=>
     L.marker(sg.ll,{icon:L.divIcon({className:'',iconSize:[22,22],iconAnchor:[11,11],html:signIcon(sg.k)}),interactive:false,keyboard:false}).addTo(signLayer))}
 
+/* Route line: where the route uses the same road both ways, the two directions are drawn side by side (right-hand side of travel),
+   each with its own arrows, instead of on top of each other. Recomputed on zoom so the gap stays the same on screen. */
+let pathLayer=null,curPathG=null;const maskCache=new WeakMap();
+function drawPathLines(g){curPathG=g;if(!pathLayer)pathLayer=L.layerGroup().addTo(map);pathLayer.clearLayers();
+  if(!maskCache.has(g))maskCache.set(g,overlapMask(g));const mask=maskCache.get(g),OFF=5;
+  const mags=mask.map((m,i)=>m?OFF:(mask[i-1]||mask[i+1])?OFF/2:0);let g2=g;
+  if(mags.some(Boolean)){const pts=g.map(p=>{const q=map.latLngToLayerPoint(p);return [q.x,q.y]});
+    g2=offsetPoints(pts,mags).map(q=>{const ll=map.layerPointToLatLng(L.point(q[0],q[1]));return [ll.lat,ll.lng]})}
+  const col=isDark()?'#F2C53D':'#B88600';
+  L.polyline(g2,{color:'#fff',weight:7,opacity:.7,interactive:false}).addTo(pathLayer);L.polyline(g2,{color:col,weight:4,dashArray:'8 7',interactive:false}).addTo(pathLayer);
+  drawArrows(g2)}
+
 /* Direction arrows along the road path; spacing follows the zoom so they stay readable. */
 let arrowLayer=null,arrowPath=null;
 const arrowIcon=deg=>L.divIcon({className:'',iconSize:[22,22],iconAnchor:[11,11],html:`<div class="arrow" style="transform:rotate(${Math.round(deg)}deg)"><svg viewBox="0 0 22 22"><path d="M11 3l7 11h-4.5v5h-5v-5H4z"/></svg></div>`});
-function drawArrows(g){arrowPath=g;if(!arrowLayer)arrowLayer=L.layerGroup().addTo(map);arrowLayer.clearLayers();if(!g)return;
+function drawArrows(g){if(!arrowLayer)arrowLayer=L.layerGroup().addTo(map);arrowLayer.clearLayers();if(!g)return;
   const step=Math.max(60,Math.min(3000,140*2**(16-map.getZoom())));
   const pins=placedCps(route().cps).map(c=>[c.lat,c.lng]),clear=Math.max(25,step*0.25);
   pathArrows(g,step).filter(a=>pins.every(p=>hav(p,a.ll)>clear)).slice(0,300).forEach(a=>L.marker(a.ll,{icon:arrowIcon(a.deg),interactive:false,keyboard:false}).addTo(arrowLayer))}
