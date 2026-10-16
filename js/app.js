@@ -7,7 +7,7 @@ const pane=document.getElementById('pane'), appEl=document.querySelector('.app')
 
 /* ---------- data model ---------- */
 function seed(){
-  const routes=TEMPLATES.map(t=>({id:uid(),name:t.name,stage:t.stage,goal:t.goal,cps:t.cps.map(([n,k])=>({id:uid(),name:n,task:k,lat:null,lng:null}))}));
+  const routes=TEMPLATES.map(t=>({id:uid(),name:t.name,stage:t.stage,goal:t.goal,cps:[]}));
   return {routes,skills:{},sessions:[],activeRouteId:routes[0].id,onboarded:false};
 }
 function migrate(x){
@@ -17,7 +17,8 @@ function migrate(x){
   x.places=x.places||[];
   if(x.onboarded==null)x.onboarded=true;
   // Every stage route 1-6 must exist; bring back any that were deleted (empty, ready for pins).
-  TEMPLATES.forEach((t,i)=>{if(!x.routes.some(r=>stageNum(r)===i+1))x.routes.push({id:uid(),name:t.name,stage:t.stage,goal:t.goal,cps:t.cps.map(([n,k])=>({id:uid(),name:n,task:k,lat:null,lng:null}))})});
+  TEMPLATES.forEach((t,i)=>{if(!x.routes.some(r=>stageNum(r)===i+1))x.routes.push({id:uid(),name:t.name,stage:t.stage,goal:t.goal,cps:[]})});
+  x.routes.forEach(r=>{if(r.cps.length&&r.cps.every(c=>c.lat==null))r.cps=[]});
   x.routes.sort((a,b)=>(stageNum(a)||99)-(stageNum(b)||99));
   if(!x.routes.some(r=>r.id===x.activeRouteId))x.activeRouteId=x.routes[0].id;
   return x}
@@ -83,9 +84,9 @@ function fitRoute(){const pts=route().cps.filter(c=>c.lat!=null).map(c=>[c.lat,c
 
 let placing=false;
 function onMapClick(e){if(pickingDest){pickingDest=false;setPlacing(false);return planDriveTo({name:'Dropped pin',ll:[e.latlng.lat,e.latlng.lng]})}if(!placing)return;const r=route();let c=r.cps.find(c=>c.lat==null);
-  if(!c){c={id:uid(),name:'Checkpoint '+(r.cps.length+1),task:'',lat:null,lng:null};r.cps.push(c)}
+  if(!c){const tp=(TEMPLATES[stageNum(r)-1]||{cps:[]}).cps[r.cps.length];c={id:uid(),name:tp?tp[0]:'Pin '+(r.cps.length+1),task:tp?tp[1]:'',lat:null,lng:null};r.cps.push(c)}
   c.lat=+e.latlng.lat.toFixed(6);c.lng=+e.latlng.lng.toFixed(6);if(!r.area)r.area=S.areaId||'calgary';save();drawRoute();render();
-  const left=r.cps.filter(c=>c.lat==null).length;toast(left?`Pinned “${c.name}”. ${left} to go.`:`Pinned “${c.name}”. Tap again to add more.`)}
+  toast(`Added pin ${r.cps.indexOf(c)+1}: ${c.name}. Tap again to add another.`)}
 function setPlacing(v,text){placing=v&&!text;const b=document.getElementById('placeBanner');b.hidden=!v;b.textContent=text||'Tap the map to drop checkpoint pins'}
 
 /* ---------- voice & sound ---------- */
@@ -380,6 +381,17 @@ function pinPlace(i){const p=placeResults[i],r=route();if(!p)return;let c=r.cps.
   c.lat=+p.ll[0].toFixed(6);c.lng=+p.ll[1].toFixed(6);if(!r.area)r.area=S.areaId;save();drawRoute();map.setView(p.ll,16);
   toast(`Pinned “${c.name}” at ${p.name}`);placeResults=[];render()}
 
+/* ---------- big map: hide the panel, keep a slim strip while driving ---------- */
+let mapBig=false;
+function toggleBig(v){mapBig=v==null?!mapBig:v;appEl.classList.toggle('mapbig',mapBig);const b=document.getElementById('bigBtn');b.setAttribute('aria-pressed',mapBig);
+  b.title=b.ariaLabel=mapBig?'Show the panel':'Bigger map';b.innerHTML=mapBig?BIG_OFF:BIG_ON;render();setTimeout(()=>map.invalidateSize(),60)}
+const BIG_ON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>';
+const BIG_OFF='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>';
+function renderMini(){if(!sess||ending)return `<button class="btn primary" id="miniBack">Show the panel</button>`;
+  const r=route();return `${r.nav?navBanner():''}<div class="row nowrap" style="gap:10px"><div class="spd" id="hSpd" style="min-width:70px"><b id="hSpeed" style="font-size:34px">0</b><span>km/h</span></div>
+   <div class="limit" id="hLimit" hidden style="width:46px;height:46px;font-size:18px;border-width:5px"></div><div class="dmeta grow" id="hMeta" style="text-align:left"></div><button class="btn" id="miniBack">Panel</button></div>
+   <div class="markrow" role="group" aria-label="Mark a moment">${Object.keys(FLAGS).map(t=>`<button class="chip ${FLAGS[t].good?'good':''}" data-flag="${esc(t)}">${t}</button>`).join('')}</div>`}
+
 /* ---------- views ---------- */
 let tab='drive',logFilter='all',chartSel=null;
 const gauge=(v,u)=>`<div class="gauge"><div class="v" style="font-size:24px">${v}</div><div class="u">${u}</div></div>`;
@@ -387,9 +399,8 @@ function mapsLink(r){const p=placedCps(r.cps).map(c=>`${c.lat.toFixed(6)},${c.ln
   const dest=p[p.length-1],way=p.slice(0,-1).slice(0,9);
   return `https://www.google.com/maps/dir/?api=1&destination=${dest}${way.length?'&waypoints='+encodeURIComponent(way.join('|')):''}&travelmode=driving`}
 function routeSelect(){return `<select id="routeSel" aria-label="Lesson route">${S.routes.map(r=>`<option value="${r.id}" ${r.id===route().id?'selected':''}>${esc(r.stage)} · ${esc(r.name)}${r.area?' · '+esc((allAreas().find(x=>x.id===r.area)||{}).name||''):''}</option>`).join('')}</select>`}
-function cpList(r,editable){const skipped=sess?skippedCps(r.cps,sess.done).map(c=>c.id):[];
+function cpList(r){const skipped=sess?skippedCps(r.cps,sess.done).map(c=>c.id):[];
   return `<ul class="cps">${r.cps.map((c,i)=>{const done=sess&&sess.done.includes(c.id),cls=done?'done':c.lat!=null?'placed':'';
-  if(editable)return `<li><span class="num ${cls}">${i+1}</span><div class="cp-edit"><input type="text" id="n_${c.id}" data-cp="${c.id}" data-f="name" value="${esc(c.name)}" aria-label="Checkpoint name"><input type="text" id="t_${c.id}" data-cp="${c.id}" data-f="task" value="${esc(c.task)}" placeholder="What to practise here" aria-label="Task"><span class="small muted">${c.lat!=null?'Pinned · drag the pin to move it':'Not on the map yet'}</span></div><div class="stack"><button class="iconbtn" data-up="${c.id}" aria-label="Move up">↑</button><button class="iconbtn" data-unpin="${c.id}" aria-label="Remove pin">⌫</button><button class="iconbtn" data-del="${c.id}" aria-label="Delete checkpoint">✕</button></div></li>`;
   return `<li><span class="num ${cls}">${i+1}</span><div><div class="cp-name">${esc(c.name)}${skipped.includes(c.id)?' <span class="small muted">(skipped)</span>':''}</div><div class="cp-task">${esc(c.task)}</div></div>${sess&&c.lat!=null&&!done?`<button class="btn small" data-done="${c.id}">Done</button>`:'<span></span>'}</li>`}).join('')}</ul>`}
 
 function settingsBlock(){const t=(id,label,on,sub='')=>`<label class="toggle"><span>${label}${sub?`<br><span class="small muted">${sub}</span>`:''}</span><input type="checkbox" id="${id}" ${on?'checked':''}></label>`;
@@ -451,7 +462,7 @@ function renderDrive(){const r=route(),placed=placedCps(r.cps).length;
      ${placed?'':`<div class="empty">This route has no pins yet.<br><div class="row" style="justify-content:center;margin-top:10px"><button class="btn primary" id="autoBuild" ${busy?'disabled':''}>${busy?'Searching…':'Auto-build pins nearby'}</button><button class="btn" id="goPlace">Place them myself</button></div></div>`}
      <button class="btn primary big" id="startBtn">Start lesson</button>
      <div class="row">${mapsLink(r)?`<a class="btn" href="${mapsLink(r)}" target="_blank" rel="noopener">Open route in Google Maps</a>`:''}</div>
-     <h3>Checkpoints</h3>${cpList(r,false)}
+     <h3>Checkpoints</h3>${cpList(r)}
      <div class="small muted">Pins tick off by themselves within ${ARRIVE_M} m, in any order. You navigate, she only drives.</div>
      ${settingsBlock()}`}
 
@@ -497,7 +508,7 @@ function renderLessonFull(){const r=route(),nx=nextTarget(r.cps,sess.done),place
      ${nx?`<div class="next"><div><h3>Next · ${r.cps.indexOf(nx)+1}</h3><div class="cp-name">${esc(nx.name)}</div></div><div class="d" id="hNext">—</div><div class="t">${esc(nx.task)}</div></div>`:''}
      <div class="progressbar" aria-label="Route progress"><i style="width:${pct}%"></i></div>
      <h3>Marks this lesson</h3><div class="small">${sess.flags.length?sess.flags.map(f=>`${esc(f.label)}${f.auto?' (auto)':''}`).join(' · '):'None yet'}</div>
-     <h3>Checkpoints</h3>${cpList(r,false)}
+     <h3>Checkpoints</h3>${cpList(r)}
      ${settingsBlock()}
      <button class="btn stopbtn big" id="endBtn">End lesson</button>`}
 
@@ -512,19 +523,31 @@ function updateHud(){if(!sess||ending)return;const q=id=>document.getElementById
   const bad=sess.flags.filter(f=>!FLAGS[f.label]?.good).length;
   q('hMeta')&&(q('hMeta').textContent=`${fmtDur(Date.now()-sess.start)} · ${sess.km.toFixed(1)} km · ${sess.done.length}/${placed} pins · ${bad} mark${bad===1?'':'s'}`)}
 
-function renderRoutes(){const r=route(),n=stageNum(r);
-  return `${areaBar()}${routeSelect()}
-   <div class="stack"><input type="text" id="rName" value="${esc(r.name)}" aria-label="Route name">
-   <div class="row nowrap"><input type="text" id="rStage" value="${esc(r.stage)}" aria-label="Stage" style="max-width:110px"><input type="text" id="rGoal" value="${esc(r.goal)}" aria-label="Goal" placeholder="Goal for this route"></div></div>
-   ${n&&n<=6?`<div class="stack"><button class="btn primary big" id="autoBuild" ${busy?'disabled':''}>${busy?'Searching…':'Auto-build pins nearby'}</button><div class="small muted">Finds real ${['','parking lots','stop signs and playgrounds','traffic signals','roundabouts','highway ramps','mixed test spots'][n]} around the centre of the map. Tap Near me first to start from where you are. Replaces this route's pins (you can undo).</div></div>`:''}
-   <div class="stack"><div class="row nowrap"><input type="text" id="placeQ" placeholder="Find a place or address" aria-label="Find a place" enterkeyhint="search"><button class="btn" id="placeGo">Find</button></div><div id="placeRes" class="stack">${placeResults.map((p,i)=>`<button class="entry" data-place="${i}"><div class="top"><span>${esc(p.name)}</span></div><div class="meta">${esc(p.addr)}</div></button>`).join('')}</div><div class="small muted">Tap a result to pin the next empty checkpoint there.</div></div>
-   ${pathLine(r)?`<div class="small"><b>Route:</b> ${pathLine(r)} (follows roads; drive time ignores lesson stops)</div>`:''}
-   <button class="btn ${placing?'primary':''}" id="placeBtn">${placing?'Done placing pins':'Tap map to place pins'}</button>
-   <div class="small muted">Pins can be reached in any order while driving. Drag a pin to fine-tune it.</div>
-   ${cpList(r,true)}
-   <div class="row"><button class="btn" id="addCp">Add checkpoint</button><button class="btn" id="clearPins">Clear pins</button><button class="btn" id="newRoute">New route</button>${stageNum(r)?'':'<button class="btn danger" id="delRoute">Delete route</button>'}</div>
-   <h3>Backup</h3><div class="row"><button class="btn" id="exportBtn">Back up all data</button><button class="btn" id="importBtn">Restore from backup</button></div>
-   <div class="small muted" id="storageLine"></div>`}
+function renderRoutes(){const r=route(),n=stageNum(r),pins=placedCps(r.cps);
+  const what=['','parking lots','stop signs and playgrounds','traffic lights','roundabouts','highway ramps','mixed test spots'][n]||'';
+  return `${routeSelect()}
+   <div class="plate"><div class="k">${esc(r.stage)}</div><div class="n">${esc(r.name)}</div>${pathLine(r)?`<div class="g">${pathLine(r)}</div>`:''}</div>
+   <div class="card"><h3>Add pins</h3>
+    ${n&&n<=6?`<button class="btn primary" id="autoBuild" ${busy?'disabled':''}>${busy?'Searching…':`Auto-build: find ${what} near the map centre`}</button>`:''}
+    <div class="row nowrap"><input type="text" id="placeQ" placeholder="Search a place or address" aria-label="Find a place" enterkeyhint="search"><button class="btn" id="placeGo">Find</button></div>
+    <div id="placeRes" class="stack">${placeResults.map((p,i)=>`<button class="entry" data-place="${i}"><div class="top"><span>${esc(p.name)}</span></div><div class="meta">${esc(p.addr)}</div></button>`).join('')}</div>
+    <button class="btn ${placing?'primary':''}" id="placeBtn">${placing?'Done tapping the map':'Tap the map to add pins'}</button>
+    ${areaBar()}</div>
+   <div class="card"><div class="row" style="justify-content:space-between"><h3>Pins · ${pins.length}</h3>${pins.length?'<button class="btn small danger" id="clearPins">Clear route</button>':''}</div>
+    ${r.cps.length?`<div class="small muted">Tap a name to see it on the map. Drag a pin on the map to move it. ✕ removes it.</div>${pinList(r)}`
+      :`<div class="empty">No pins yet. Use Auto-build, search, or tap the map.</div>`}</div>
+   <details class="settings"><summary>Route details</summary><div class="stack" style="margin-top:8px">
+    <label class="small">Name<input type="text" id="rName" value="${esc(r.name)}"></label>
+    <div class="row nowrap"><label class="small" style="max-width:120px">Stage<input type="text" id="rStage" value="${esc(r.stage)}"></label><label class="small grow">Goal<input type="text" id="rGoal" value="${esc(r.goal)}" placeholder="Goal for this route"></label></div>
+    <div class="row"><button class="btn" id="newRoute">New route</button>${n?'':'<button class="btn danger" id="delRoute">Delete this route</button>'}</div></div></details>
+   <details class="settings"><summary>Backup</summary><div class="stack" style="margin-top:8px"><div class="row"><button class="btn" id="exportBtn">Back up all data</button><button class="btn" id="importBtn">Restore from backup</button></div>
+    <div class="small muted" id="storageLine"></div></div></details>`}
+/* Editable pin list: name + task, move up/down, delete (pin and row together). */
+function pinList(r){return `<ul class="cps">${r.cps.map((c,i)=>`<li><span class="num ${c.lat!=null?'placed':''}">${i+1}</span>
+   <div class="cp-edit"><input type="text" id="n_${c.id}" data-cp="${c.id}" data-f="name" value="${esc(c.name)}" aria-label="Pin name">
+   <input type="text" id="t_${c.id}" data-cp="${c.id}" data-f="task" value="${esc(c.task)}" placeholder="What to practise here" aria-label="Task">
+   ${c.lat!=null?`<button class="linkbtn" data-goto="${c.id}">Show on map</button>`:'<span class="small muted">Not on the map: tap the map to place it</span>'}</div>
+   <div class="stack"><button class="iconbtn" data-up="${c.id}" aria-label="Move up" ${i?'':'disabled'}>↑</button><button class="iconbtn" data-down="${c.id}" aria-label="Move down" ${i<r.cps.length-1?'':'disabled'}>↓</button><button class="iconbtn del" data-del="${c.id}" aria-label="Delete pin">✕</button></div></li>`).join('')}</ul>`}
 
 function renderSkills(){const pct=skillPct(S.skills);
   return `<div class="stack"><div class="row" style="justify-content:space-between"><h2>Skill board · ${esc(prof().name)}</h2><span class="muted small">${pct}% to road-test ready</span></div><div class="small muted">Tap a skill for what to check and how to teach it.</div>
@@ -568,7 +591,7 @@ function dropSessions(ids){const gone=S.sessions.filter(s=>ids.includes(s.id));S
 
 /* render() keeps scroll position and open skill cards between redraws */
 const scrollMem={};let lastKey=null;const openCards=new Set();
-function viewKey(){return reportView?'report':lotPick?'lots':tab+(tab==='drive'?(sess?(ending?':end':expanded?':full':':drv'):prestart?':pre':''):'')}
+function viewKey(){return mapBig?'mini':reportView?'report':lotPick?'lots':tab+(tab==='drive'?(sess?(ending?':end':expanded?':full':':drv'):prestart?':pre':''):'')}
 let spotLayer=null;
 function drawSpots(){if(!map)return;if(!spotLayer)spotLayer=L.layerGroup().addTo(map);spotLayer.clearLayers();
   problemSpots(S.sessions).forEach(sp=>L.marker(sp.ll,{icon:L.divIcon({className:'',iconSize:[26,26],iconAnchor:[13,13],html:'<div class="spot"><span>!</span></div>'}),keyboard:false})
@@ -580,8 +603,8 @@ function render(){if(!S)return;drawSpots();
   if(lastKey){scrollMem[lastKey]=pane.scrollTop;if(lastKey==='skills')pane.querySelectorAll('details.coach').forEach(d=>d.open?openCards.add(d.dataset.k):openCards.delete(d.dataset.k))}
   const key=viewKey();
   appEl.classList.toggle('driving',!!sess&&!ending&&!expanded&&tab==='drive'&&!reportView);
-  if(reportView){renderReport();lastKey=key;return}
-  pane.innerHTML=lotPick?renderLotPick():({drive:renderDrive,routes:renderRoutes,skills:renderSkills,log:renderLog})[tab]();
+  if(reportView&&!mapBig){renderReport();lastKey=key;return}
+  pane.innerHTML=mapBig?renderMini():lotPick?renderLotPick():({drive:renderDrive,routes:renderRoutes,skills:renderSkills,log:renderLog})[tab]();
   if(key==='skills')pane.querySelectorAll('details.coach').forEach(d=>{if(openCards.has(d.dataset.k))d.open=true});
   pane.scrollTop=scrollMem[key]||0;lastKey=key;
   if(tab==='drive'&&sess)updateHud();
@@ -622,6 +645,7 @@ pane.addEventListener('click',async e=>{const pt=e.target.closest('[data-pt]');i
   if(id==='editPlaces'){editPlaces=!editPlaces;return render()}
   if(d.delplace){const i=S.places.findIndex(x=>x.id===d.delplace),p=S.places[i];S.places.splice(i,1);save();render();return toast(`Removed ${p.name}`,{action:()=>{S.places.splice(i,0,p);save();render()}})}
   if(d.showspot){const sp=problemSpots(S.sessions)[+d.showspot];if(sp){map.setView(sp.ll,17);toast(`${sp.label}: ${sp.count}× in ${sp.lessons} lessons`)}return}
+  if(id==='miniBack')return toggleBig(false);
   if(id==='destGo')return destSearch(document.getElementById('destQ').value);
   if(d.dest!=null)return planDriveTo(destResults[+d.dest]);
   if(id==='destPick'){pickingDest=true;setPlacing(true,'Tap the map where you want to drive to');return toast('Tap the destination on the map')}
@@ -656,14 +680,14 @@ pane.addEventListener('click',async e=>{const pt=e.target.closest('[data-pt]');i
     (S.areas=S.areas||[]).push(a);S.areaId=a.id;savingArea=false;save();toast('Saved area '+n);return render()}
   if(id==='areaDel'){if(confirmTap(t,'Tap again to remove')){S.areas=(S.areas||[]).filter(x=>x.id!==S.areaId);save();goArea('calgary')}return}
   if(id==='placeBtn'){setPlacing(!placing);if(placing)toast('Tap the map where each checkpoint is');return render()}
-  if(id==='addCp'){r.cps.push({id:uid(),name:'Checkpoint '+(r.cps.length+1),task:'',lat:null,lng:null});save();return render()}
   if(d.up){const i=r.cps.findIndex(c=>c.id===d.up);if(i>0){[r.cps[i-1],r.cps[i]]=[r.cps[i],r.cps[i-1]];save();drawRoute();render()}return}
-  if(d.unpin){const c=r.cps.find(c=>c.id===d.unpin);c.lat=c.lng=null;save();drawRoute();return render()}
+  if(d.down){const i=r.cps.findIndex(c=>c.id===d.down);if(i>=0&&i<r.cps.length-1){[r.cps[i+1],r.cps[i]]=[r.cps[i],r.cps[i+1]];save();drawRoute();render()}return}
+  if(d.goto){const c=r.cps.find(x=>x.id===d.goto);if(c){map.setView([c.lat,c.lng],17);if(mapBig)toggleBig(false)}return}
   if(d.del){const i=r.cps.findIndex(c=>c.id===d.del),c=r.cps[i];r.cps.splice(i,1);save();drawRoute();render();
-    return toast('Checkpoint deleted',{action:()=>{r.cps.splice(i,0,c);save();drawRoute();render()}})}
+    return toast('Pin deleted',{action:()=>{r.cps.splice(i,0,c);save();drawRoute();render()}})}
   if(id==='newRoute'){const n={id:uid(),name:'My route',stage:'Custom',goal:'',cps:[],area:S.areaId||'calgary'};S.routes.push(n);S.activeRouteId=n.id;save();setPlacing(true);drawRoute();return render()}
-  if(id==='clearPins'){if(!placedCps(r.cps).length)return toast('This route has no pins');const before=JSON.parse(JSON.stringify(r.cps));r.cps.forEach(c=>{c.lat=c.lng=null});delete r.path;save();drawRoute();render();
-    return toast('Pins cleared',{action:()=>{r.cps=before;save();drawRoute();render()}})}
+  if(id==='clearPins'){if(!confirmTap(t,'Tap again to clear'))return;const before=JSON.parse(JSON.stringify(r.cps));r.cps=[];delete r.path;save();drawRoute();render();
+    return toast('Route cleared',{action:()=>{r.cps=before;save();drawRoute();render()}})}
   if(id==='delRoute'){if(stageNum(r))return toast('Stage routes can be cleared but not deleted');if(!confirmTap(t,'Tap again to delete'))return;
     const i=S.routes.indexOf(r);S.routes.splice(i,1);S.activeRouteId=S.routes[0].id;save();drawRoute();render();
     return toast(`Deleted “${r.name}”`,{action:()=>{S.routes.splice(i,0,r);S.activeRouteId=r.id;save();drawRoute();render()}})}
@@ -714,6 +738,7 @@ document.getElementById('importFile').onchange=e=>{const f=e.target.files[0];if(
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;reportView=null;prestart=false;if(lotPick)cancelLotPick();syncTabs();if(tab!=='routes')setPlacing(false);render()});
 document.getElementById('locBtn').onclick=e=>{if(!ensureWatch())return;follow=!follow;e.currentTarget.setAttribute('aria-pressed',follow);if(follow&&lastFix)map.setView(lastFix.ll,17)};
 document.getElementById('fitBtn').onclick=()=>fitRoute();
+document.getElementById('bigBtn').onclick=()=>toggleBig();
 document.getElementById('voiceBtn').onclick=()=>{S.settings.voice=!S.settings.voice;save();syncVoiceBtn();if(S.settings.voice){unlockAudio();say('Voice on')}else hush();toast(S.settings.voice?'Voice prompts on':'Voice prompts off')};
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'){persistActive();Store.flush()}else if(sess)grabWake()});
 window.addEventListener('pagehide',()=>{persistActive();Store.flush()});

@@ -208,3 +208,12 @@ details.settings summary{cursor:pointer;font:800 13px/1.2 var(--display);text-tr
 .spot{width:26px;height:26px;border-radius:6px;transform:rotate(45deg);background:#E8710A;border:2px solid #fff;display:grid;place-items:center;box-shadow:0 1px 4px rgb(0 0 0/.4)}
 .spot{font:900 15px/1 var(--display);color:#fff}
 .spot span{transform:rotate(-45deg)}
+
+/* big map: panel shrinks to a strip */
+.app.mapbig .tabs{display:none}
+.app.mapbig .sheet{max-height:none}
+.app.mapbig .pane{gap:8px;padding-block:8px 10px}
+.linkbtn{all:unset;cursor:pointer;color:var(--sign);font-weight:700;font-size:14px;text-decoration:underline;text-underline-offset:3px}
+.linkbtn:focus-visible{outline:3px solid var(--caution)}
+.iconbtn.del{color:var(--stop)}
+.iconbtn:disabled{opacity:.3}
