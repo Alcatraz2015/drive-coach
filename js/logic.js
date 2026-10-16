@@ -75,15 +75,28 @@ function segDist(p,a,b){const k=Math.cos(p[0]*RAD),ax=(a[1]-p[1])*k,ay=a[0]-p[0]
   const t=dx||dy?Math.max(0,Math.min(1,-(ax*dx+ay*dy)/(dx*dx+dy*dy))):0;return Math.hypot(ax+t*dx,ay+t*dy)*111320}
 /* Limit for the road the car is on: nearest way within 25 m, preferring one that points the way we're heading. */
 /* Nearest road to ll (within 25 m), preferring one pointing the way we're heading. */
-function roadAt(ways,ll,heading){let best=null;
-  for(const w of ways){const g=w.g;for(let i=0;i<g.length-1;i++){let d=segDist(ll,g[i],g[i+1]);
-    if(heading!=null){const b=bearing(g[i],g[i+1]),off=Math.min(angDiff(b,heading),angDiff((b+180)%360,heading));if(off>40)d+=15}
-    if(d<25&&(!best||d<best.d))best={d,w}}}
+const isOneway=t=>/^(yes|1|true)$/.test(t.oneway||'')||/^(motorway|motorway_link)$/.test(t.highway||'');
+/* Nearest road to ll (within 25 m). With a heading: one-way roads pointing the other way are ruled out
+   (the other carriageway of Deerfoot, say), and at highway speed the main lanes beat a ramp right beside them. */
+function roadAt(ways,ll,heading,kmh){let best=null;
+  for(const w of ways){const g=w.g,t=w.tags||{},ow=isOneway(t),link=/_link$/.test(t.highway||'');
+    for(let i=0;i<g.length-1;i++){let d=segDist(ll,g[i],g[i+1]);
+      if(heading!=null){const b=bearing(g[i],g[i+1]),fwd=angDiff(b,heading),off=ow?fwd:Math.min(fwd,angDiff((b+180)%360,heading));
+        if(ow&&fwd>100)continue;if(off>40)d+=15}
+      if(link&&kmh>70)d+=8;
+      if(d<25&&(!best||d<best.d))best={d,w}}}
   return best&&best.w}
+/* Speed limit sign that doesn't flicker: a new value has to show up on 3 fixes in a row before it replaces the current one. */
+function stickyLimit(st,cand){
+  if(!cand){st.miss=(st.miss||0)+1;if(st.miss>=5)st.cur=null;return st.cur}
+  st.miss=0;if(!st.cur||cand.kmh===st.cur.kmh){st.cur=cand;st.n=0;st.next=null;return st.cur}
+  if(st.next&&st.next.kmh===cand.kmh)st.n++;else{st.next=cand;st.n=1}
+  if(st.n>=3){st.cur=cand;st.n=0;st.next=null}
+  return st.cur}
 /* Playground zones apply on ordinary streets, not highways, ramps or 70+ roads. */
 function playZoneRoad(t){if(!t)return false;if(/^(motorway|trunk)(_link)?$/.test(t.highway||'')||/_link$/.test(t.highway||''))return false;
   const v=parseMaxspeed(t.maxspeed);return v==null||v<70}
-function limitAt(ways,ll,heading){const w=roadAt(ways,ll,heading);
+function limitAt(ways,ll,heading,kmh){const w=roadAt(ways,ll,heading,kmh);
   if(!w)return null;const t=w.tags||{};let v=parseMaxspeed(t.maxspeed),assumed=false;
   if(v==null&&/^(residential|living_street)$/.test(t.highway||'')&&inBox(ll,D.CALGARY_BOX)){v=D.CALGARY_RES_LIMIT;assumed=true}
   return v==null?null:{kmh:v,assumed,road:t.name||''}}
@@ -304,6 +317,6 @@ function uTurns(g){const out=[];if(!g||g.length<3)return out;
 
 const API={uid,esc,hav,bearing,angDiff,fmtDur,fmtDist,stageNum,median,GPS,acceptFix,smoothSpeed,thinTrack,placedCps,arrivals,nextTarget,skippedCps,
   skillPct,hours,badFlags,mistakeSeries,topMistakes,suggestNext,curfew,testEligibleFrom,parseMaxspeed,inBox,segDist,limitAt,
-  uTurns,roadAt,playZoneRoad,SAY,speakable,stopCheck,hardBrake,problemSpots,HEADS_UP,focusWeights,pickLoopTargets,trackSegments,LOOP_SKILLS,pathArrows,cumDist,projectOnPath,instruction,maneuvers,planDrive,spotSummary,SPOTS,polyArea,cluster,carLot,parseFeatures,rankLots,lotPins,walkRamp,buildStage};
+  uTurns,roadAt,stickyLimit,isOneway,playZoneRoad,SAY,speakable,stopCheck,hardBrake,problemSpots,HEADS_UP,focusWeights,pickLoopTargets,trackSegments,LOOP_SKILLS,pathArrows,cumDist,projectOnPath,instruction,maneuvers,planDrive,spotSummary,SPOTS,polyArea,cluster,carLot,parseFeatures,rankLots,lotPins,walkRamp,buildStage};
 if(typeof module!=='undefined')module.exports=API;else Object.assign(root,API);
 })(typeof window!=='undefined'?window:globalThis);

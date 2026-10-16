@@ -189,3 +189,19 @@ test('user-added stop signs count when the route passes within 15 m',()=>{
   const els=[{type:'node',id:'u1',lat:51.0025,lon:-114.0001,tags:{highway:'stop',user:true}},{type:'node',id:'u2',lat:51.0025,lon:-114.003,tags:{highway:'stop',user:true}}];
   const cps=L.planDrive({g,steps,nodes:[]},els);assert.equal(cps.filter(c=>c.kind==='stop').length,1);
 });
+
+test('speed limit: the other carriageway and ramps beside the highway are ignored',()=>{
+  // Two one-way carriageways 20 m apart (northbound 110, southbound 100) plus a northbound ramp at 60
+  const nb={tags:{highway:'motorway',maxspeed:'110',oneway:'yes'},g:[[51,-114],[51.02,-114]]};
+  const sb={tags:{highway:'motorway',maxspeed:'100',oneway:'yes'},g:[[51.02,-114.0003],[51,-114.0003]]};
+  const ramp={tags:{highway:'motorway_link',maxspeed:'60'},g:[[51,-113.99985],[51.02,-113.99985]]};
+  const here=[51.01,-114.0002];                                         // GPS drifted closer to the southbound lanes
+  assert.equal(L.limitAt([nb,sb,ramp],here,0,105).kmh,110);
+  assert.equal(L.limitAt([nb,sb,ramp],here,180,105).kmh,100);
+});
+test('speed limit sign only changes after 3 fixes agree',()=>{
+  const st={},a={kmh:110},b={kmh:100};
+  assert.equal(L.stickyLimit(st,a).kmh,110);
+  assert.equal(L.stickyLimit(st,b).kmh,110);assert.equal(L.stickyLimit(st,a).kmh,110);   // one stray reading
+  L.stickyLimit(st,b);L.stickyLimit(st,b);assert.equal(L.stickyLimit(st,b).kmh,100);
+});

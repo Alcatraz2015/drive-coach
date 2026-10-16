@@ -222,3 +222,16 @@ details.settings summary{cursor:pointer;font:800 13px/1.2 var(--display);text-tr
 
 .chip.addstop{border-color:#C8102E;color:#C8102E}
 .ustop{width:24px;height:24px;background:#C8102E;color:#fff;font:900 7px/24px var(--display);text-align:center;letter-spacing:.02em;clip-path:polygon(30% 0,70% 0,100% 30%,100% 70%,70% 100%,30% 100%,0 70%,0 30%)}
+
+/* road-sign icons along the route */
+.sg{display:grid;place-items:center;width:22px;height:22px;box-shadow:0 1px 3px rgb(0 0 0/.45)}
+.sg-stop{background:#C8102E;clip-path:polygon(30% 0,70% 0,100% 30%,100% 70%,70% 100%,30% 100%,0 70%,0 30%);box-shadow:none;outline:0}
+.sg-stop b{color:#fff;font:900 6.5px/1 var(--display);letter-spacing:.02em}
+.sg-lights{width:12px;height:24px;background:#111;border:1.5px solid #fff;border-radius:4px;display:flex;flex-direction:column;justify-content:space-evenly;align-items:center}
+.sg-lights i{width:5px;height:5px;border-radius:50%}
+.sg-lights i:nth-child(1){background:#F0546A}.sg-lights i:nth-child(2){background:#F2C53D}.sg-lights i:nth-child(3){background:#45C27A}
+.sg-play{background:#C6E82C;clip-path:polygon(50% 0,100% 38%,100% 100%,0 100%,0 38%);box-shadow:none}
+.sg-play b{color:#111;font:900 9px/1 var(--display);margin-top:6px}
+.pin{position:relative}
+.sg.badge{position:absolute;right:-9px;top:-9px;transform:scale(.8)}
+.sg-lights.badge{right:-6px;top:-12px}

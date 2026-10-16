@@ -42,6 +42,8 @@ class Collector:
             item = {"id": wid, "h": hw, "g": [[round(a, 5), round(b, 5)] for a, b in g]}
             if "maxspeed" in t: item["m"] = t["maxspeed"]
             if "name" in t: item["n"] = t["name"]
+            if t.get("oneway") in ("yes", "1", "true") or hw in ("motorway", "motorway_link") or t.get("junction") in ("roundabout", "circular"): item["o"] = 1
+            if t.get("oneway") == "-1": item["g"].reverse(); item["o"] = 1   # drawn backwards in OSM: flip so it points the legal way
             self._add(self.roads, sorted({tile_key(*p) for p in g}), item); self.nr += 1
         feat = None
         if t.get("amenity") == "parking":

@@ -52,19 +52,40 @@ function initMap(){
 const carIcon=h=>L.divIcon({className:'',iconSize:[40,40],iconAnchor:[20,20],html:`<div class="car" style="transform:rotate(${h||0}deg)"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="13" fill="#2F7DE1" stroke="#fff" stroke-width="3"/><path d="M20 10l6 14-6-3.5-6 3.5z" fill="#fff"/></svg></div>`});
 const flagIcon=good=>L.divIcon({className:'',iconSize:[22,22],iconAnchor:[11,11],html:`<div class="flag" style="${good?'background:var(--ok)':''}">${good?'★':'!'}</div>`});
 function drawRoute(){
-  cpLayer.clearLayers();arrowLayer&&arrowLayer.clearLayers();arrowPath=null;const r=route(),pts=[],nx=sess?nextTarget(r.cps,sess.done):null,skipped=sess?skippedCps(r.cps,sess.done).map(c=>c.id):[];
+  cpLayer.clearLayers();signLayer&&signLayer.clearLayers();arrowLayer&&arrowLayer.clearLayers();arrowPath=null;const r=route(),pts=[],nx=sess?nextTarget(r.cps,sess.done):null,skipped=sess?skippedCps(r.cps,sess.done).map(c=>c.id):[];
   r.cps.forEach((c,i)=>{if(c.lat==null)return;pts.push([c.lat,c.lng]);
     const done=sess&&sess.done.includes(c.id);
     const m=L.marker([c.lat,c.lng],{draggable:!sess,icon:L.divIcon({className:'',iconSize:[30,30],iconAnchor:[15,15],
-      html:`<div class="pin ${done?'done':''} ${nx&&nx.id===c.id?'next':''}" style="${skipped.includes(c.id)?'opacity:.55':''}">${i+1}</div>`})})
+      html:`<div class="pin ${done?'done':''} ${nx&&nx.id===c.id?'next':''}" style="${skipped.includes(c.id)?'opacity:.55':''}">${i+1}${SIGN_KIND[c.kind]?signIcon(SIGN_KIND[c.kind],'badge'):''}</div>`})})
      .bindTooltip(esc(c.name),{direction:'top',offset:[0,-14]}).addTo(cpLayer);
     m.on('dragend',e=>{const p=e.target.getLatLng();c.lat=+p.lat.toFixed(6);c.lng=+p.lng.toFixed(6);save();drawRoute()});
   });
   if(pts.length>1){const col=isDark()?'#F2C53D':'#B88600',k=pathKey(pts);
     if(r.path&&r.path.key===k){L.polyline(r.path.g,{color:'#fff',weight:7,opacity:.7}).addTo(cpLayer);L.polyline(r.path.g,{color:col,weight:4,dashArray:'8 7'}).addTo(cpLayer);drawArrows(r.path.g);
+      drawRouteSigns(r);
       if(!r.nav)uTurns(r.path.g).forEach(u=>L.marker(u.ll,{icon:L.divIcon({className:'',iconSize:[28,28],iconAnchor:[14,14],html:'<div class="uturn" title="Turnaround">↶</div>'}),interactive:false}).addTo(cpLayer))}
     else{L.polyline(pts,{color:col,weight:3,dashArray:'2 8',opacity:.8}).addTo(cpLayer);queuePath(r,pts,k)}}
 }
+/* Road-sign icons for stop signs, traffic lights and playground zones along the route's road line. */
+const SIGN_KIND={stop:'stop',allway:'stop',signals:'lights',play:'play'};
+function signIcon(k,cls=''){return k==='stop'?`<span class="sg sg-stop ${cls}" title="Stop sign"><b>STOP</b></span>`:k==='lights'?`<span class="sg sg-lights ${cls}" title="Traffic lights"><i></i><i></i><i></i></span>`:`<span class="sg sg-play ${cls}" title="Playground zone"><b>30</b></span>`}
+let signLayer=null;const signCache=new Map();
+async function drawRouteSigns(r){if(!signLayer)signLayer=L.layerGroup().addTo(map);const key=r.path.key;
+  let list=signCache.get(key);
+  if(!list){const g=r.path.g,cum=cumDist(g);list=[];
+    try{const els=[...await OSM.alongPath(g),...userStopEls()];
+      for(const e of els){if(e.type!=='node')continue;const t=e.tags||{},ll=[e.lat,e.lon];
+        const k=t.highway==='stop'?'stop':t.highway==='traffic_signals'?'lights':t.leisure==='playground'?'play':null;if(!k)continue;
+        const p=projectOnPath(g,cum,ll);if(!p)continue;
+        if(k==='play'){if(p.off>100)continue;const at=g[p.i];try{const {ways}=await OSM.roads(at);if(!playZoneRoad((roadAt(ways,at,null)||{}).tags))continue}catch(err){continue}list.push({k,ll:at})}
+        else if(p.off<=12)list.push({k,ll})}
+      list=list.filter((a,i)=>!list.slice(0,i).some(b=>b.k===a.k&&hav(a.ll,b.ll)<(a.k==='play'?150:40)))}catch(e){return}
+    signCache.set(key,list)}
+  if(route()!==r||!r.path||r.path.key!==key)return;
+  const pins=placedCps(r.cps);signLayer.clearLayers();
+  list.filter(sg=>!pins.some(c=>SIGN_KIND[c.kind]===sg.k&&hav([c.lat,c.lng],sg.ll)<40)).forEach(sg=>
+    L.marker(sg.ll,{icon:L.divIcon({className:'',iconSize:[22,22],iconAnchor:[11,11],html:signIcon(sg.k)}),interactive:false,keyboard:false}).addTo(signLayer))}
+
 /* Direction arrows along the road path; spacing follows the zoom so they stay readable. */
 let arrowLayer=null,arrowPath=null;
 const arrowIcon=deg=>L.divIcon({className:'',iconSize:[22,22],iconAnchor:[11,11],html:`<div class="arrow" style="transform:rotate(${Math.round(deg)}deg)"><svg viewBox="0 0 22 22"><path d="M11 3l7 11h-4.5v5h-5v-5H4z"/></svg></div>`});
@@ -166,11 +187,11 @@ function autoChecks(ll,raw,now){const r=route(),on=S.settings.autoChecks;
     st.last=d;spotWarned.set(sp,st)}}
 
 /* ---------- speed limits ---------- */
-const lim={cell:null,ways:[],loading:false,failAt:0,cur:null,over:0,warnAt:0,markAt:0};
+const lim={st:{},cell:null,ways:[],loading:false,failAt:0,cur:null,over:0,warnAt:0,markAt:0};
 async function refreshRoads(ll){if(lim.loading||Date.now()-lim.failAt<60000)return;if(lim.cell&&hav(lim.cell,ll)<700)return;
   lim.loading=true;try{const r=await OSM.roads(ll);lim.cell=r.cell;lim.ways=r.ways}catch(e){lim.failAt=Date.now()}finally{lim.loading=false}}
 function checkSpeed(ll,hd,now){if(!S.settings.speedAlerts){lim.cur=null;return}
-  refreshRoads(ll);lim.cur=lim.ways.length?limitAt(lim.ways,ll,sess.kmh>8?hd:null):null;
+  refreshRoads(ll);lim.cur=stickyLimit(lim.st,lim.ways.length?limitAt(lim.ways,ll,sess.kmh>8?hd:null,sess.kmh):null);
   if(!lim.cur||sess.kmh<15){lim.over=0;return}
   lim.over=sess.kmh>lim.cur.kmh+5?lim.over+1:0;
   if(lim.over>=3&&(lim.warnedFor!==lim.cur.kmh||now-lim.warnAt>60000)){lim.warnAt=now;lim.warnedFor=lim.cur.kmh;beep(660,.25,2);say(`Speed limit ${lim.cur.kmh}.`,{prio:2,ttl:4000});

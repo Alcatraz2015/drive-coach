@@ -51,11 +51,11 @@ const OSM=(()=>{
   /* Roads with their speed tags in a ~1.2 km circle, cached by ~1 km grid cell. */
   async function roads(ll){
     const loc=await localEls('r',ll,1300);
-    if(loc)return {cell:ll,ways:loc.map(w=>({tags:{highway:w.h,maxspeed:w.m,name:w.n},g:w.g}))};
+    if(loc)return {cell:ll,ways:loc.map(w=>({tags:{highway:w.h,maxspeed:w.m,name:w.n,oneway:w.o?'yes':undefined},g:w.g}))};
     const cell=[Math.round(ll[0]*100)/100,Math.round(ll[1]*70)/70],key='r:'+cell[0].toFixed(2)+','+cell[1].toFixed(3);
     let ways=await Store.osmGet(key);
     if(!ways){const els=await overpass(`[out:json][timeout:20];way(around:1300,${cell[0]},${cell[1]})["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link)$"];out geom tags;`,20000);
-      ways=els.map(e=>({tags:{highway:e.tags.highway,maxspeed:e.tags.maxspeed,name:e.tags.name},g:(e.geometry||[]).map(p=>[+p.lat.toFixed(5),+p.lon.toFixed(5)])}));
+      ways=els.map(e=>({tags:{highway:e.tags.highway,maxspeed:e.tags.maxspeed,name:e.tags.name,oneway:e.tags.oneway},g:(e.geometry||[]).map(p=>[+p.lat.toFixed(5),+p.lon.toFixed(5)])}));
       Store.osmPut(key,ways)}
     return {cell,ways}}
 
