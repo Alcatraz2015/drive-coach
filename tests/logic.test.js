@@ -86,9 +86,12 @@ test('direction arrows follow the path heading',()=>{
   const a=L.pathArrows(g,500);
   assert.ok(a.length>=4);assert.ok(Math.abs(a[0].deg-0)<1);assert.ok(Math.abs(a[a.length-1].deg-90)<2);
 });
-test('lot pins are marked so they are not moved onto roads',()=>{
+test('stage 1 is a practice list with no pins, and it counts toward progress',()=>{
   const lot={ll:[51,-114],g:[[51,-114],[51.001,-114],[51.001,-113.998],[51,-113.998]],area:20000};
-  assert.ok(L.buildStage(1,{lot:[]},[51.01,-114],lot).every(c=>c.onLot));
+  const cps=L.buildStage(1,{lot:[]},[51.01,-114],lot);
+  assert.ok(cps.length>=5&&cps.every(c=>c.drill&&c.lat==null));
+  assert.equal(L.placedCps(cps).length,0);assert.equal(L.trackable(cps).length,cps.length);
+  assert.equal(L.nextTarget(cps,[]),null);   // nothing for GPS to arrive at
 });
 
 test('A to B: turns, controls on the route only, playgrounds, destination, in order',()=>{

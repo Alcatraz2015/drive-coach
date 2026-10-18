@@ -18,7 +18,11 @@ function migrate(x){
   if(x.onboarded==null)x.onboarded=true;
   // Every stage route 1-6 must exist; bring back any that were deleted (empty, ready for pins).
   TEMPLATES.forEach((t,i)=>{if(!x.routes.some(r=>stageNum(r)===i+1))x.routes.push({id:uid(),name:t.name,stage:t.stage,goal:t.goal,cps:[]})});
-  x.routes.forEach(r=>{if(r.cps.length&&r.cps.every(c=>c.lat==null))r.cps=[]});
+  x.routes.forEach(r=>{
+    if(stageNum(r)===1&&!r.lot&&r.cps.some(c=>c.onLot&&c.lat!=null)){const p=r.cps.filter(c=>c.lat!=null),m=/\(([^)]+)\)$/.exec(r.cps[0].task||'');
+      r.lot={name:m?m[1]:'Your parking lot',ll:[+(p.reduce((a,c)=>a+c.lat,0)/p.length).toFixed(6),+(p.reduce((a,c)=>a+c.lng,0)/p.length).toFixed(6)]};r.cps=drillList();delete r.path}
+    if(r.cps.length&&r.cps.every(c=>c.lat==null&&!c.drill))r.cps=[];
+    if(stageNum(r)===1&&!r.cps.length)r.cps=drillList()});
   x.routes.sort((a,b)=>(stageNum(a)||99)-(stageNum(b)||99));
   if(!x.routes.some(r=>r.id===x.activeRouteId))x.activeRouteId=x.routes[0].id;
   return x}
@@ -93,6 +97,8 @@ function drawRoute(){
      .bindTooltip(esc(c.name),{direction:'top',offset:[0,-14]}).addTo(cpLayer);
     m.on('dragend',e=>{const p=e.target.getLatLng();c.lat=+p.lat.toFixed(6);c.lng=+p.lng.toFixed(6);save();drawRoute()});
   });
+  if(r.lot){if(r.lot.g)L.polygon(r.lot.g,{color:'#B88600',weight:3,fillColor:'#F2C53D',fillOpacity:.25,interactive:false}).addTo(cpLayer);
+    L.marker(r.lot.ll,{interactive:true,icon:L.divIcon({className:'',iconSize:[32,32],iconAnchor:[16,16],html:'<div class="pin lotpin">P</div>'})}).bindTooltip(esc(r.lot.name),{direction:'top',offset:[0,-14]}).addTo(cpLayer)}
   if(pts.length>1){const col=isDark()?'#F2C53D':'#B88600',k=pathKey(pts);
     if(r.path&&r.path.key===k){drawPathLines(r.path.g);preloadPath(r.path.g);
       drawRouteSigns(r);
@@ -148,12 +154,12 @@ function turnaroundNote(r){const pts=placedCps(r.cps).map(c=>[c.lat,c.lng]);if(r
   const near=us.map(u=>{let bi=0,bd=1e9;placedCps(r.cps).forEach((c,i)=>{const d=hav(u.ll,[c.lat,c.lng]);if(d<bd){bd=d;bi=i}});return bi+1});
   return `<div class="card warn small"><b>${us.length===1?'This route has a turnaround':'This route has '+us.length+' turnarounds'} (↶ on the map)</b> near pin ${[...new Set(near)].join(', ')}. That usually means a pin sits on a side street or dead end. Drag it onto the street you'll drive through, or change the order with ↑ ↓.</div>`}
 const pathLine=r=>{const pts=placedCps(r.cps).map(c=>[c.lat,c.lng]);return r.path&&pts.length>1&&r.path.key===pathKey(pts)?`${r.path.km} km by road · about ${r.path.min} min`:''};
-function fitRoute(){const pts=route().cps.filter(c=>c.lat!=null).map(c=>[c.lat,c.lng]);
+function fitRoute(){const r=route(),pts=r.cps.filter(c=>c.lat!=null).map(c=>[c.lat,c.lng]);if(r.lot)pts.push(...(r.lot.g||[r.lot.ll]));
   if(sess&&sess.track.length)pts.push(...sess.track);
-  if(pts.length===1)map.setView(pts[0],16);else if(pts.length)map.fitBounds(pts,{padding:[40,40]});else{map.setView(curArea().c,curArea().z);toast('No pins yet. Place them in Routes.')}}
+  if(pts.length===1)map.setView(pts[0],16);else if(pts.length)map.fitBounds(pts,{padding:[40,40]});else{map.setView(curArea().c,curArea().z);toast(stageNum(r)===1?'Pick a parking lot first.':'No pins yet. Place them in Routes.')}}
 
 let placing=false;
-function onMapClick(e){if(pickingDest){pickingDest=false;setPlacing(false);return planDriveTo({name:'Dropped pin',ll:[e.latlng.lat,e.latlng.lng]})}if(!placing)return;const r=route();let c=r.cps.find(c=>c.lat==null);
+function onMapClick(e){if(pickingDest){pickingDest=false;setPlacing(false);return planDriveTo({name:'Dropped pin',ll:[e.latlng.lat,e.latlng.lng]})}if(!placing)return;const r=route();let c=r.cps.find(c=>c.lat==null&&!c.drill);
   if(!c){const tp=(TEMPLATES[stageNum(r)-1]||{cps:[]}).cps[r.cps.length];c={id:uid(),name:tp?tp[0]:'Pin '+(r.cps.length+1),task:tp?tp[1]:'',lat:null,lng:null};r.cps.push(c)}
   c.lat=+e.latlng.lat.toFixed(6);c.lng=+e.latlng.lng.toFixed(6);if(!r.area)r.area=S.areaId||'calgary';save();drawRoute();render();
   toast(`Added pin ${r.cps.indexOf(c)+1}: ${c.name}. Tap again to add another.`)}
@@ -255,7 +261,7 @@ async function buildNav(points){const nav=await OSM.navRoute(points),raw=[...awa
     try{const {ways}=await OSM.roads(at);if(playZoneRoad((roadAt(ways,at,null)||{}).tags))els.push(e)}catch(err){}}
   const cps=planDrive(nav,els);
   return {nav:{g:nav.g,man:maneuvers(nav.steps,nav.g,cum),km:nav.km,min:nav.min},cps,cum}}
-function installRoute(id,props,nav,cps){let r=S.routes.find(x=>x.id===id);if(!r){r={id};S.routes.push(r)}
+function installRoute(id,props,nav,cps){planOpen=false;let r=S.routes.find(x=>x.id===id);if(!r){r={id};S.routes.push(r)}
   Object.assign(r,props,{cps,nav,area:S.areaId});r.path={key:pathKey(placedCps(cps).map(c=>[c.lat,c.lng])),g:nav.g,km:nav.km,min:nav.min};
   S.activeRouteId=r.id;save();drawRoute();fitRoute();tab='drive';syncTabs();return r}
 async function planDriveTo(dest){if(sess)return toast('End the lesson first');if(planning)return;planning=true;destResults=[];render();toast('Planning the route…',{ms:15000});
@@ -343,9 +349,9 @@ function resumeActive(a,thenEnd){pendingResume=null;
   sess.flags.forEach(f=>flagMarkers.set(f.t,L.marker(f.ll,{icon:flagIcon(FLAGS[f.label]?.good)}).bindTooltip(esc(f.label)).addTo(flagLayer)));
   ending=!!thenEnd||!!a.ending;tab='drive';syncTabs();beginRunning();if(!thenEnd)toast('Lesson resumed')}
 function markDone(c,auto){if(!sess||!c||sess.done.includes(c.id))return;sess.done.push(c.id);sess.nextDist=null;beep(880,.45,2);
-  const r=route(),nx=nextTarget(r.cps,sess.done);
+  const r=route(),nx=nextTarget(r.cps,sess.done)||r.cps.find(x=>x.drill&&!sess.done.includes(x.id));
   if(r.nav){if(c.kind==='dest')say('You have arrived.',{prio:3,ttl:20000})}
-  else say(nx?`Done. Next: ${nx.name.split(' · ')[0]}.`:'All checkpoints done. Head back.',{prio:2});
+  else say(nx?`Done. Next: ${nx.name.split(' · ')[0]}.`:r.lot?'All practice done. Nice work.':'All checkpoints done. Head back.',{prio:2});
   toast((auto?'Reached ':'Done: ')+c.name,{action:()=>{sess&&(sess.done=sess.done.filter(x=>x!==c.id),sess.announced=sess.announced.filter(x=>x!==c.id));drawRoute();render();persistActive()}});
   persistActive();drawRoute();render()}
 function addFlag(label,extra={}){if(!sess)return;if(!lastFix)return toast('Waiting for GPS…');
@@ -357,12 +363,12 @@ function addFlag(label,extra={}){if(!sess)return;if(!lastFix)return toast('Waiti
 function finishSession(keep){
   if(keep){const r=route();
     S.sessions.unshift({id:sess.id,start:sess.start,end:Date.now(),routeId:r.id,routeName:r.name,stage:r.stage,km:+sess.km.toFixed(2),maxKmh:Math.round(sess.maxKmh),
-      done:sess.done.length,total:placedCps(r.cps).length,feel:endForm.feel,notes:endForm.notes.trim(),
+      done:sess.done.length,total:trackable(r.cps).length,feel:endForm.feel,notes:endForm.notes.trim(),
       ...(()=>{const segs=trackSegments(sess.track,sess.breaks),k=Math.max(1,Math.ceil(sess.track.length/1500)),track=[],breaks=[];
         segs.forEach((sg,i)=>{if(i)breaks.push(track.length);sg.forEach((p,j)=>{if(j%k===0||j===sg.length-1)track.push([+p[0].toFixed(5),+p[1].toFixed(5)])})});
         return {track,breaks,gaps:(sess.gaps||[]).map(g=>({ms:g.to-g.from,a:g.a.map(v=>+v.toFixed(5)),b:g.b.map(v=>+v.toFixed(5))}))}})(),flags:sess.flags.map(f=>({ll:f.ll,label:f.label,t:f.t,...(f.auto?{auto:true,limit:f.limit}:{})})),
       plan:r.path&&r.path.key===pathKey(placedCps(r.cps).map(c=>[c.lat,c.lng]))?thinTrack(r.path.g,600):null,
-      cps:r.cps.map((c,i)=>({n:i+1,name:c.name,task:c.task,done:sess.done.includes(c.id),ll:c.lat!=null?[+c.lat.toFixed(5),+c.lng.toFixed(5)]:null})).filter(c=>c.ll)});
+      cps:r.cps.map((c,i)=>({n:i+1,name:c.name,task:c.task,done:sess.done.includes(c.id),ll:c.lat!=null?[+c.lat.toFixed(5),+c.lng.toFixed(5)]:null,drill:!!c.drill})).filter(c=>c.ll||c.drill).map(({drill,...c})=>c)});
     reportView=sess.id;save();Store.flush();toast('Lesson saved to the log')}
   clearInterval(tick);try{wake?.release()}catch(e){}wake=null;sess=null;ending=false;expanded=false;endForm={feel:0,notes:''};
   Store.del('active');hush();
@@ -438,7 +444,22 @@ function showLotPicker(p){lotPick=p;lotLayer.clearLayers();setPlacing(false);
   map.fitBounds(L.latLngBounds([p.s,...p.lots.map(l=>l.ll)]),{padding:[40,40]});
   toast(`Found ${p.lots.length} car lots. Tap one on the map or in the list.`);render()}
 function chooseLot(i){const p=lotPick;if(!p)return;lotLayer.clearLayers();lotPick=null;
-  if(route().id!==p.routeId)S.activeRouteId=p.routeId;applyBuild(route(),buildStage(p.n,p.F,p.s,p.lots[i]));render()}
+  if(route().id!==p.routeId)S.activeRouteId=p.routeId;const l=p.lots[i];
+  if(p.n===1)return setLot(route(),{name:l.name||'Parking lot',ll:l.ll.map(v=>+v.toFixed(6)),g:l.g.map(q=>[+q[0].toFixed(5),+q[1].toFixed(5)]),area:Math.round(l.area)});
+  applyBuild(route(),buildStage(p.n,p.F,p.s,l));render()}
+/* Stage 1: the lot is the place, the lesson is a practice list ticked by hand. */
+function setLot(r,lot){const before={lot:r.lot,cps:JSON.parse(JSON.stringify(r.cps))};r.lot=lot;
+  if(!r.cps.some(c=>c.drill))r.cps=drillList();delete r.path;r.area=r.area||S.areaId;placeResults=[];save();drawRoute();setTimeout(()=>{map.invalidateSize();fitRoute()},80);
+  toast(`Lot set: ${lot.name}. Use Directions to get there.`,{action:()=>{r.lot=before.lot;r.cps=before.cps;if(!r.lot)delete r.lot;save();drawRoute();render()},ms:7000});
+  tab='drive';syncTabs();render()}
+const lotDir=(lot,app)=>{const ll=`${lot.ll[0]},${lot.ll[1]}`;return app==='apple'?`https://maps.apple.com/?daddr=${ll}&dirflg=d`:`https://www.google.com/maps/dir/?api=1&destination=${ll}&travelmode=driving`};
+/* After driving to the lot with the in-app route, one tap back to the practice list. */
+function backToLot(){const r=route(),back=S.lotReturn&&S.routes.find(x=>x.id===S.lotReturn);if(!back||r.id===back.id||!back.lot)return '';
+  return `<div class="card"><div class="row nowrap" style="justify-content:space-between"><div class="small">At <b>${esc(back.lot.name)}</b>?</div><button class="btn primary" id="lotBack">Switch to lot practice</button></div></div>`}
+function lotCard(r){const lot=r.lot,d=lastFix?fmtDist(hav(lastFix.ll,lot.ll)):'';
+  return `<div class="card"><h3>Parking lot</h3><div><b>${esc(lot.name)}</b>${d?` <span class="small muted">· ${d} away</span>`:''}</div>
+   <div class="row"><a class="btn" href="${lotDir(lot,'apple')}" target="_blank" rel="noopener">Apple Maps</a><a class="btn" href="${lotDir(lot,'google')}" target="_blank" rel="noopener">Google Maps</a><button class="btn" id="lotDrive" ${planning?'disabled':''}>Route in this app</button></div>
+   <div class="small muted">Get there first, then tap Start lesson. No pins in the lot, so parked cars don't get in the way.</div></div>`}
 function cancelLotPick(){lotPick=null;lotLayer.clearLayers();render()}
 function renderLotPick(){const p=lotPick;const lab=l=>`${l.area>=10000?(l.area/10000).toFixed(1)+' ha':Math.round(l.area/100)*100+' m²'} · ${fmtDist(hav(p.s,l.ll))} away`;
   return `<div class="row" style="justify-content:space-between"><h2>Pick a parking lot</h2><button class="btn" id="lotCancel">Cancel</button></div>
@@ -447,7 +468,9 @@ function renderLotPick(){const p=lotPick;const lab=l=>`${l.area>=10000?(l.area/1
 async function placeSearch(q){q=q.trim();if(!q)return;const box=document.getElementById('placeRes');if(box)box.innerHTML='<div class="small muted">Searching…</div>';
   try{placeResults=await OSM.search(q,map.getBounds().pad(1.5));render()}
   catch(e){const b=document.getElementById('placeRes');if(b)b.innerHTML='<div class="small muted">Search failed. Check the connection.</div>'}}
-function pinPlace(i){const p=placeResults[i],r=route();if(!p)return;let c=r.cps.find(c=>c.lat==null);
+function pinPlace(i){const p=placeResults[i],r=route();if(!p)return;
+  if(stageNum(r)===1)return setLot(r,{name:p.name,ll:[+p.ll[0].toFixed(6),+p.ll[1].toFixed(6)]});
+  let c=r.cps.find(c=>c.lat==null&&!c.drill);
   if(!c){c={id:uid(),name:p.name,task:'',lat:null,lng:null};r.cps.push(c)}
   c.lat=+p.ll[0].toFixed(6);c.lng=+p.ll[1].toFixed(6);if(!r.area)r.area=S.areaId;save();drawRoute();map.setView(p.ll,16);
   toast(`Pinned “${c.name}” at ${p.name}`);placeResults=[];render()}
@@ -472,7 +495,7 @@ function mapsLink(r){const p=placedCps(r.cps).map(c=>`${c.lat.toFixed(6)},${c.ln
 function routeSelect(){return `<select id="routeSel" aria-label="Lesson route">${S.routes.map(r=>`<option value="${r.id}" ${r.id===route().id?'selected':''}>${esc(r.stage)} · ${esc(r.name)}${r.area?' · '+esc((allAreas().find(x=>x.id===r.area)||{}).name||''):''}</option>`).join('')}</select>`}
 function cpList(r){const skipped=sess?skippedCps(r.cps,sess.done).map(c=>c.id):[];
   return `<ul class="cps">${r.cps.map((c,i)=>{const done=sess&&sess.done.includes(c.id),cls=done?'done':c.lat!=null?'placed':'';
-  return `<li><span class="num ${cls}">${i+1}</span><div><div class="cp-name">${esc(c.name)}${skipped.includes(c.id)?' <span class="small muted">(skipped)</span>':''}</div><div class="cp-task">${esc(c.task)}</div></div>${sess&&c.lat!=null&&!done?`<button class="btn small" data-done="${c.id}">Done</button>`:'<span></span>'}</li>`}).join('')}</ul>`}
+  return `<li><span class="num ${cls}">${i+1}</span><div><div class="cp-name">${esc(c.name)}${skipped.includes(c.id)?' <span class="small muted">(skipped)</span>':''}</div><div class="cp-task">${esc(c.task)}</div></div>${sess&&(c.lat!=null||c.drill)&&!done?`<button class="btn small" data-done="${c.id}">Done</button>`:'<span></span>'}</li>`}).join('')}</ul>`}
 
 function settingsBlock(){const t=(id,label,on,sub='')=>`<label class="toggle"><span>${label}${sub?`<br><span class="small muted">${sub}</span>`:''}</span><input type="checkbox" id="${id}" ${on?'checked':''}></label>`;
   return `<details class="settings"><summary>Lesson settings</summary><div>
@@ -501,6 +524,7 @@ function resumeCard(a){const s=a.sess,el=(a.saved||Date.now())-s.start,r=S.route
 
 function coachCard(){const sug=suggestNext(S.routes,S.sessions,S.skills),top=topMistakes(S.sessions)[0],r=route();
   if(!sug&&!top)return '';
+  if(!top&&sug.routeId===r.id)return `<div class="small muted">✓ Suggested next lesson · ${esc(sug.why)}</div>`;
   return `<div class="card"><h3>Coach notes</h3>
    ${sug?(sug.routeId===r.id?`<div class="small">✓ This is the suggested next lesson. ${esc(sug.why)}.</div>`
      :`<div class="row nowrap" style="justify-content:space-between"><div class="small"><b>Suggested: Stage ${sug.stage} · ${esc(sug.name)}</b><br>${esc(sug.why)}.</div><button class="btn small" data-goroute="${sug.routeId}">Switch</button></div>`):''}
@@ -513,11 +537,11 @@ function renderPrestart(){const late=curfew(new Date());
    <button class="btn ${late?'danger':'primary'} big" id="goBtn">${late?'Start anyway':'Start lesson'}</button>
    <div class="row" style="justify-content:space-between"><button class="btn" id="preCancel">Cancel</button><label class="check"><input type="checkbox" id="preSkip"><span class="small">Don't show this again</span></label></div>`}
 
-function renderDrive(){const r=route(),placed=placedCps(r.cps).length;
+function renderDrive(){const r=route(),placed=trackable(r.cps).length,lotStage=stageNum(r)===1;
   if(!S.onboarded)return renderOnboard();
   if(ending){const el=Date.now()-sess.start;
     return `<h2>How did it go?</h2>
-     <div class="sum">${gauge(fmtDur(el),'Time')}${gauge(sess.km.toFixed(1),'Km')}${gauge(sess.done.length+'/'+placed,'Checkpoints')}</div>
+     <div class="sum">${gauge(fmtDur(el),'Time')}${gauge(sess.km.toFixed(1),'Km')}${gauge(sess.done.length+'/'+placed,r.lot||stageNum(r)===1?'Practice':'Checkpoints')}</div>
      <h3>How did it feel?</h3>
      <div class="chips">${FEEL.slice(1).map((t,i)=>`<button class="chip" data-feel="${i+1}" aria-pressed="${endForm.feel===i+1}">${t}</button>`).join('')}</div>
      <h3>Notes for next time</h3>
@@ -527,18 +551,22 @@ function renderDrive(){const r=route(),placed=placedCps(r.cps).length;
      <div class="row" style="justify-content:space-between"><button class="btn" id="backDrive">Back to the drive</button><button class="btn danger" id="discardSess">Discard this lesson</button></div>`}
   if(sess)return expanded?renderLessonFull():renderDriving();
   if(prestart)return renderPrestart();
-  return `${pendingResume?resumeCard(pendingResume):''}
-     <div class="small muted">Learner: <b>${esc(prof().name)}</b>${S.profiles.length>1?' · switch in the Log tab':''}</div>
-     ${coachCard()}${destCard()}${areaBar()}${routeSelect()}
+  const hasList=r.cps.length>0;
+  return `${pendingResume?resumeCard(pendingResume):''}${backToLot()}
+     <div class="row nowrap" style="justify-content:space-between"><span class="small muted">Learner: <b>${esc(prof().name)}</b></span>${S.profiles.length>1?'<span class="small muted">switch in Log</span>':''}</div>
+     ${routeSelect()}
      <div class="plate"><div class="k">${esc(r.stage)}</div><div class="n">${esc(r.name)}</div><div class="g">${esc(r.goal)}</div>${pathLine(r)?`<div class="g" style="margin-top:6px"><b>${pathLine(r)}</b></div>`:''}</div>
-     ${placed?'':`<div class="empty">This route has no pins yet.<br><div class="row" style="justify-content:center;margin-top:10px"><button class="btn primary" id="autoBuild" ${busy?'disabled':''}>${busy?'Searching…':'Auto-build pins nearby'}</button><button class="btn" id="goPlace">Place them myself</button></div></div>`}
+     ${coachCard()}
+     ${r.lot?lotCard(r):lotStage?`<div class="empty">Where are you practising?<br><div class="row" style="justify-content:center;margin-top:10px"><button class="btn primary" id="autoBuild" ${busy?'disabled':''}>${busy?'Searching…':'Find parking lots nearby'}</button></div><div class="small muted" style="margin-top:6px">Searches around the map centre. Already at a lot? Just start.</div></div>`
+      :placed?'':`<div class="empty">This route has no pins yet.<br><div class="row" style="justify-content:center;margin-top:10px"><button class="btn primary" id="autoBuild" ${busy?'disabled':''}>${busy?'Searching…':'Auto-build pins nearby'}</button><button class="btn" id="goPlace">Place them myself</button></div></div>`}
      <button class="btn primary big" id="startBtn">Start lesson</button>
-     <div class="row">${mapsLink(r)?`<a class="btn" href="${mapsLink(r)}" target="_blank" rel="noopener">Open route in Google Maps</a>`:''}</div>
-     <h3>Checkpoints</h3>${cpList(r)}
-     <div class="small muted">Pins tick off by themselves within ${ARRIVE_M} m, in any order. The supervisor navigates; the driver just drives.</div>
+     ${mapsLink(r)?`<div class="row"><a class="btn" href="${mapsLink(r)}" target="_blank" rel="noopener">Open route in Google Maps</a></div>`:''}
+     ${hasList?`<h3>${lotStage?'Practice list':'Checkpoints'}</h3>${cpList(r)}
+     <div class="small muted">${lotStage?'Tick each one off during the lesson. Edit the list in Routes.':`Pins tick off by themselves within ${ARRIVE_M} m, in any order. The supervisor navigates; the driver just drives.`}</div>`:''}
+     ${destCard()}
      ${settingsBlock()}`}
 
-let planMode='go',loopMin=20,testMin=30,loopStart=null,testStart=null,editPlaces=false;
+let planOpen=false,planMode='go',loopMin=20,testMin=30,loopStart=null,testStart=null,editPlaces=false;
 const placeChips=(act,sel)=>editPlaces&&S.places.length?`<div class="stack">${S.places.map(p=>`<div class="row nowrap"><input type="text" id="pl_${p.id}" data-placename="${p.id}" value="${esc(p.name)}" aria-label="Place name"><button class="btn small danger" data-delplace="${p.id}" aria-label="Remove ${esc(p.name)}">✕</button></div>`).join('')}</div>`:S.places.length?`<div class="chips">${S.places.map(p=>`<span class="chip place ${sel&&sel.id===p.id?'on':''}"><button data-${act}="${p.id}">★ ${esc(p.name)}</button>${editPlaces?`<button class="x" data-delplace="${p.id}" aria-label="Remove ${esc(p.name)}">✕</button>`:''}</span>`).join('')}</div>`:'';
 function destCard(){const mode=b=>`<button class="chip" data-pm="${b}" aria-pressed="${planMode===b}">${{go:'Go to a place',loop:'Practice loop',test:'Road test'}[b]}</button>`;
   const lens=(cur,key,opts)=>`<div class="chips">${opts.map(m=>`<button class="chip" data-${key}="${m}" aria-pressed="${cur===m}">${m} min</button>`).join('')}</div>`;
@@ -559,10 +587,12 @@ function destCard(){const mode=b=>`<button class="chip" data-pm="${b}" aria-pres
     ${lens(testMin,'testmin',[20,30,45])}
     <button class="btn primary" id="buildTest" ${planning||!testStart?'disabled':''}>${planning?'Building…':'Build test loop'}</button>
     <div class="small muted">Starts and ends at the test location and mixes what examiners look for: stop signs, lights and left turns, playground zones, a roundabout if there's one, and parallel and hill parking on a quiet street.</div>`;
-  return `<div class="card"><h3>Plan a drive</h3><div class="chips">${mode('go')}${mode('loop')}${mode('test')}</div>${body}</div>`}
+  if(!planOpen&&!planning)return `<button class="card planhead" id="planToggle" aria-expanded="false"><span><b>Plan a new drive</b><span class="small muted">Go somewhere, a practice loop, or a road test route</span></span><span class="chev" aria-hidden="true">›</span></button>`;
+  return `<div class="card"><div class="row nowrap" style="justify-content:space-between"><h3>Plan a new drive</h3><button class="btn small" id="planToggle" aria-expanded="true">Close</button></div><div class="chips">${mode('go')}${mode('loop')}${mode('test')}</div>${body}</div>`}
 let testResults=[];
 async function testSearch(q){q=q.trim();if(!q)return;try{testResults=await OSM.search(q,map.getBounds().pad(3));if(!testResults.length)toast('No matches. Try the street address.');render()}catch(e){toast('Search failed. Check the connection.')}}
 function renderDriving(){const r=route(),nx=nextTarget(r.cps,sess.done),placed=placedCps(r.cps).length;
+  if(!placed&&r.cps.some(c=>c.drill))return renderPractice(r);
   return `${navBanner()}<div class="dhud"><div class="spd" id="hSpd"><b id="hSpeed">0</b><span>km/h</span></div>
      <div class="limit" id="hLimit" hidden aria-label="Speed limit"></div>
      <div class="dnext">${nx?`<div class="small muted">Next · ${r.cps.indexOf(nx)+1} of ${r.cps.length}</div><div class="nm">${esc(nx.name)}</div><div class="ds" id="hNext">—</div>`
@@ -572,7 +602,15 @@ function renderDriving(){const r=route(),nx=nextTarget(r.cps,sess.done),placed=p
    <div class="dbar">${nx?`<button class="btn" data-done="${nx.id}">✓ ${esc(nx.name.length>16?'Done':nx.name)}</button>`:'<span></span>'}<button class="btn" id="moreBtn">More</button><button class="btn stopbtn" id="endBtn">End</button></div>
    <div class="dmeta" id="hMeta"></div>`}
 
-function renderLessonFull(){const r=route(),nx=nextTarget(r.cps,sess.done),placed=placedCps(r.cps).length,pct=placed?Math.round(sess.done.length/placed*100):0;
+/* Lot lesson: big tappable practice list, tap again to untick. */
+function renderPractice(r){const list=r.cps.filter(c=>c.drill),done=list.filter(c=>sess.done.includes(c.id)).length,now=list.find(c=>!sess.done.includes(c.id));
+  return `<div class="dhud"><div class="spd" id="hSpd"><b id="hSpeed">0</b><span>km/h</span></div><div class="limit" id="hLimit" hidden></div>
+     <div class="dnext"><div class="small muted">Practice · ${done} of ${list.length} done</div><div class="nm">${now?esc(now.name):'All done'}</div>${now?'':'<div class="small muted">End the lesson when ready</div>'}</div></div>
+   <div class="drills">${list.map(c=>{const on=sess.done.includes(c.id);return `<button class="drill ${on?'on':''} ${now&&now.id===c.id?'now':''}" data-drill="${c.id}" aria-pressed="${on}"><span class="tick">${on?'✓':''}</span><span><b>${esc(c.name)}</b><span class="small">${esc(c.task)}</span></span></button>`}).join('')}</div>
+   <div class="markrow" role="group" aria-label="Mark a moment">${Object.keys(FLAGS).map(t=>`<button class="chip ${FLAGS[t].good?'good':''}" data-flag="${esc(t)}">${t}</button>`).join('')}</div>
+   <div class="dbar"><span></span><button class="btn" id="moreBtn">More</button><button class="btn stopbtn" id="endBtn">End</button></div>
+   <div class="dmeta" id="hMeta"></div>`}
+function renderLessonFull(){const r=route(),nx=nextTarget(r.cps,sess.done),placed=trackable(r.cps).length,pct=placed?Math.round(sess.done.length/placed*100):0;
   return `<button class="btn primary" id="lessBtn">Back to driving view</button>
      <div class="hud"><div class="gauge speed"><div class="v" id="hSpeed">0</div><div class="u">km/h</div></div>
      <div class="gauge"><div class="v" id="hTime">0:00</div><div class="u">Time</div></div>
@@ -584,7 +622,7 @@ function renderLessonFull(){const r=route(),nx=nextTarget(r.cps,sess.done),place
      ${settingsBlock()}
      <button class="btn stopbtn big" id="endBtn">End lesson</button>`}
 
-function updateHud(){if(!sess||ending)return;const q=id=>document.getElementById(id),r=route(),placed=placedCps(r.cps).length;
+function updateHud(){if(!sess||ending)return;const q=id=>document.getElementById(id),r=route(),placed=trackable(r.cps).length;
   const kmh=Math.round(sess.kmh||0);q('hSpeed')&&(q('hSpeed').textContent=kmh);
   q('hTime')&&(q('hTime').textContent=fmtDur(Date.now()-sess.start));q('hKm')&&(q('hKm').textContent=sess.km.toFixed(1));
   q('hNext')&&(q('hNext').textContent=sess.nextDist!=null?fmtDist(sess.nextDist):'—');
@@ -593,9 +631,9 @@ function updateHud(){if(!sess||ending)return;const q=id=>document.getElementById
   if(q('hNav')&&navState.next){const {m,dist}=navState.next;q('hNavI').textContent=m.icon;q('hNavD').textContent=fmtDist(dist);q('hNavT').textContent=m.text}
   else if(q('hNav')){q('hNavD').textContent='';q('hNavT').textContent=lastFix?'Head to the yellow line':'Waiting for GPS…'}
   const bad=sess.flags.filter(f=>!FLAGS[f.label]?.good).length;
-  q('hMeta')&&(q('hMeta').textContent=`${fmtDur(Date.now()-sess.start)} · ${sess.km.toFixed(1)} km · ${sess.done.length}/${placed} pins · ${bad} mark${bad===1?'':'s'}`)}
+  q('hMeta')&&(q('hMeta').textContent=`${fmtDur(Date.now()-sess.start)} · ${sess.km.toFixed(1)} km · ${sess.done.length}/${placed} done · ${bad} mark${bad===1?'':'s'}`)}
 
-function renderRoutes(){const r=route(),n=stageNum(r),pins=placedCps(r.cps);
+function renderRoutes(){const r=route(),n=stageNum(r),pins=placedCps(r.cps);if(n===1)return renderLotRoute(r);
   const what=['','parking lots','stop signs and playgrounds','traffic lights','roundabouts','highway ramps','mixed test spots'][n]||'';
   return `${routeSelect()}
    <div class="plate"><div class="k">${esc(r.stage)}</div><div class="n">${esc(r.name)}</div>${pathLine(r)?`<div class="g">${pathLine(r)}</div>`:''}</div>
@@ -608,7 +646,8 @@ function renderRoutes(){const r=route(),n=stageNum(r),pins=placedCps(r.cps);
    ${turnaroundNote(r)}<div class="card"><div class="row" style="justify-content:space-between"><h3>Pins · ${pins.length}</h3>${pins.length?'<button class="btn small danger" id="clearPins">Clear route</button>':''}</div>
     ${r.cps.length?`<div class="small muted">Tap a name to see it on the map. Drag a pin on the map to move it. ✕ removes it.</div>${pinList(r)}`
       :`<div class="empty">No pins yet. Use Auto-build, search, or tap the map.</div>`}</div>
-   <details class="settings"><summary>Route details</summary><div class="stack" style="margin-top:8px">
+   ${routeExtras(r)}`}
+function routeExtras(r){const n=stageNum(r);return `<details class="settings"><summary>Route details</summary><div class="stack" style="margin-top:8px">
     <label class="small">Name<input type="text" id="rName" value="${esc(r.name)}"></label>
     <div class="row nowrap"><label class="small" style="max-width:120px">Stage<input type="text" id="rStage" value="${esc(r.stage)}"></label><label class="small grow">Goal<input type="text" id="rGoal" value="${esc(r.goal)}" placeholder="Goal for this route"></label></div>
     <div class="row"><button class="btn" id="newRoute">New route</button>${n?'':'<button class="btn danger" id="delRoute">Delete this route</button>'}</div></div></details>
@@ -616,12 +655,24 @@ function renderRoutes(){const r=route(),n=stageNum(r),pins=placedCps(r.cps);
     ${S.userStops.map((u,i)=>`<div class="row nowrap" style="justify-content:space-between"><span class="small">Stop sign ${i+1} · added ${new Date(u.t).toLocaleDateString(undefined,{month:'short',day:'numeric'})}</span><span class="row nowrap"><button class="btn small" data-showstop="${u.id}">Show</button><button class="btn small danger" data-delstop="${u.id}">✕</button></span></div>`).join('')}</div></details>`:''}
    <details class="settings"><summary>Backup</summary><div class="stack" style="margin-top:8px"><div class="row"><button class="btn" id="exportBtn">Back up all data</button><button class="btn" id="importBtn">Restore from backup</button></div>
     <div class="small muted" id="storageLine"></div></div></details>`}
+function renderLotRoute(r){
+  return `${routeSelect()}
+   <div class="plate"><div class="k">${esc(r.stage)}</div><div class="n">${esc(r.name)}</div><div class="g">${esc(r.goal)}</div></div>
+   <div class="card"><div class="row" style="justify-content:space-between"><h3>Parking lot</h3>${r.lot?'<button class="btn small danger" id="clearLot">Remove lot</button>':''}</div>
+    ${r.lot?`<div><b>${esc(r.lot.name)}</b></div>`:'<div class="small muted">None picked yet.</div>'}
+    <button class="btn ${r.lot?'':'primary'}" id="autoBuild" ${busy?'disabled':''}>${busy?'Searching…':r.lot?'Pick a different lot near the map centre':'Find parking lots near the map centre'}</button>
+    <div class="row nowrap"><input type="text" id="placeQ" placeholder="Or search a lot by name or address" aria-label="Find a parking lot" enterkeyhint="search"><button class="btn" id="placeGo">Find</button></div>
+    <div id="placeRes" class="stack">${placeResults.map((p,i)=>`<button class="entry" data-place="${i}"><div class="top"><span>${esc(p.name)}</span></div><div class="meta">${esc(p.addr)}</div></button>`).join('')}</div>
+    ${areaBar()}</div>
+   <div class="card"><div class="row" style="justify-content:space-between"><h3>Practice list · ${r.cps.length}</h3><button class="btn small" id="addDrill">+ Add</button></div>
+    <div class="small muted">Ticked off by hand during the lesson. No pins, so parked cars never get in the way.</div>${pinList(r)}</div>
+   ${routeExtras(r)}`}
 /* Editable pin list: name + task, move up/down, delete (pin and row together). */
 function pinList(r){return `<ul class="cps">${r.cps.map((c,i)=>`<li><span class="num ${c.lat!=null?'placed':''}">${i+1}</span>
    <div class="cp-edit"><input type="text" id="n_${c.id}" data-cp="${c.id}" data-f="name" value="${esc(c.name)}" aria-label="Pin name">
    <input type="text" id="t_${c.id}" data-cp="${c.id}" data-f="task" value="${esc(c.task)}" placeholder="What to practise here" aria-label="Task">
-   ${c.lat!=null?`<button class="linkbtn" data-goto="${c.id}">Show on map</button>`:'<span class="small muted">Not on the map: tap the map to place it</span>'}</div>
-   <div class="stack"><button class="iconbtn" data-up="${c.id}" aria-label="Move up" ${i?'':'disabled'}>↑</button><button class="iconbtn" data-down="${c.id}" aria-label="Move down" ${i<r.cps.length-1?'':'disabled'}>↓</button><button class="iconbtn del" data-del="${c.id}" aria-label="Delete pin">✕</button></div></li>`).join('')}</ul>`}
+   ${c.lat!=null?`<button class="linkbtn" data-goto="${c.id}">Show on map</button>`:c.drill?'':'<span class="small muted">Not on the map: tap the map to place it</span>'}</div>
+   <div class="stack"><button class="iconbtn" data-up="${c.id}" aria-label="Move up" ${i?'':'disabled'}>↑</button><button class="iconbtn" data-down="${c.id}" aria-label="Move down" ${i<r.cps.length-1?'':'disabled'}>↓</button><button class="iconbtn del" data-del="${c.id}" aria-label="${c.drill?'Remove':'Delete pin'}">✕</button></div></li>`).join('')}</ul>`}
 
 function renderSkills(){const pct=skillPct(S.skills);
   return `<div class="stack"><div class="row" style="justify-content:space-between"><h2>Skill board · ${esc(prof().name)}</h2><span class="muted small">${pct}% to road-test ready</span></div><div class="small muted">Tap a skill for what to check and how to teach it.</div>
@@ -704,6 +755,7 @@ pane.addEventListener('click',async e=>{const pt=e.target.closest('[data-pt]');i
   const t=e.target.closest('button');if(!t)return;const r=route(),d=t.dataset,id=t.id;
   // lesson
   if(d.maptheme){S.settings.mapTheme=d.maptheme;save();addBaseMap();drawRoute();return render()}
+  if(id==='planToggle'){planOpen=!planOpen;return render()}
   if(d.pm){planMode=d.pm;destResults=[];return render()}
   if(d.loopmin){loopMin=+d.loopmin;return render()}
   if(d.testmin){testMin=+d.testmin;return render()}
@@ -735,6 +787,12 @@ pane.addEventListener('click',async e=>{const pt=e.target.closest('[data-pt]');i
   if(id==='discardSess'){if(confirmTap(t,'Tap again to discard'))finishSession(false);return}
   if(d.feel){endForm.feel=+d.feel;persistActive();return render()}
   if(d.done)return markDone(r.cps.find(c=>c.id===d.done),false);
+  if(d.drill){const c=r.cps.find(x=>x.id===d.drill);if(!c||!sess)return;if(sess.done.includes(c.id)){sess.done=sess.done.filter(x=>x!==c.id);persistActive();return render()}return markDone(c,false)}
+  if(id==='lotDrive'){S.lotReturn=r.id;save();return planDriveTo({name:r.lot.name,ll:r.lot.ll})}
+  if(id==='lotBack'){S.activeRouteId=S.lotReturn;delete S.lotReturn;save();drawRoute();fitRoute();return render()}
+  if(id==='addDrill'){r.cps.push({id:uid(),name:'New practice',task:'',lat:null,lng:null,drill:true});save();render();const f=document.getElementById('n_'+r.cps[r.cps.length-1].id);f&&(f.focus(),f.select());return}
+  if(id==='clearLot'){if(!confirmTap(t,'Tap again to remove'))return;const lot=r.lot;delete r.lot;save();drawRoute();render();
+    return toast('Lot removed',{action:()=>{r.lot=lot;save();drawRoute();render()}})}
   if(d.flag)return addFlag(d.flag);
   if(id==='addStop'){if(!lastFix)return toast('Waiting for GPS…');const u={id:uid(),ll:[+lastFix.ll[0].toFixed(6),+lastFix.ll[1].toFixed(6)],t:Date.now()};S.userStops.push(u);save();
     const m=L.marker(u.ll,{icon:L.divIcon({className:'',iconSize:[24,24],iconAnchor:[12,12],html:'<div class="ustop">STOP</div>'})}).addTo(flagLayer);

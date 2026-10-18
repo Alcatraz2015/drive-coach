@@ -35,7 +35,7 @@ const SKILLS=[
 ];
 const TEMPLATES=[
  {name:'Empty lot basics',stage:'Stage 1',goal:'A big empty parking lot early morning or evening. No traffic, just the car.',
-  cps:[['Lot entrance','Seat, mirrors, belt. Find gas, brake, signals, wipers, lights.'],['Straight run','Creep forward, stop smoothly. Repeat until stops feel gentle.'],['Wide loop','Circle the lot both ways. Hand-over-hand steering.'],['Stall row','Park forward into a stall, centred. Then reverse out.'],['Far corner','Reverse in a straight line 5 stalls, looking over shoulder.']]},
+  cps:[['Controls check','Seat, mirrors, belt. Find gas, brake, signals, wipers, lights.'],['Smooth starts and stops','Creep forward, stop smoothly. Repeat until stops feel gentle.'],['Loops both ways','Circle the lot both ways. Hand-over-hand steering.'],['Forward stall parking','Park forward into a stall, centred. Then reverse out.'],['Straight reversing','Reverse in a straight line about 5 stalls, looking over the shoulder.'],['Reverse stall parking','Back into a stall using mirrors and shoulder checks.']]},
  {name:'Quiet neighbourhood',stage:'Stage 2',goal:'Quiet residential crescents: stop signs, turns and playground zones. Calgary residential limit is 40 km/h.',
   cps:[['First stop sign','Full stop behind the line, count 2, look L-R-L.'],['Right turn','Signal early, slow before the turn, finish in the right lane.'],['Left turn','Signal, check oncoming, turn into the nearest lane.'],['Playground zone','Hold 30. Watch for kids between parked cars.'],['4-way stop','Who arrived first goes first. Tie: yield to the right.'],['Back home','Park at the curb, wheels within 30 cm.']]},
  {name:'Traffic lights & lanes',stage:'Stage 3',goal:'Collector roads with signals and two lanes each way, steady traffic.',

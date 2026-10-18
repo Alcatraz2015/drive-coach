@@ -147,11 +147,15 @@ function walkRamp(F,s){
       if(dist>9000)break}}
   return null}
 /* Build checkpoints for a stage from parsed features. pick.lot = the parking lot the user chose (stages 1 and 6). */
+/* Stage 1 is a practice list, not pins: a parking lot is full of parked cars that move, so pins inside it get in the way. */
+function drillList(mkId=uid){return D.TEMPLATES[0].cps.map(([name,task])=>({id:mkId(),name,task,lat:null,lng:null,drill:true}))}
+/* Items a lesson counts: pins on the map plus practice-list items ticked by hand. */
+function trackable(cps){return cps.filter(c=>c.lat!=null||c.drill)}
 function buildStage(n,F,s,lot,mkId=uid){
   const tpl=D.TEMPLATES[n-1],used=[];
   const take=(list,from,min=150)=>{const f=list.filter(x=>!used.includes(x)&&used.every(u=>hav(u.ll,x.ll)>=min)&&hav(s,x.ll)>=80).sort((a,b)=>hav(from,a.ll)-hav(from,b.ll))[0];if(f)used.push(f);return f};
   const mk=(name,task,ll,place,onLot)=>({id:mkId(),name,task:place?`${task} (${place})`:task,lat:ll?+ll[0].toFixed(6):null,lng:ll?+ll[1].toFixed(6):null,...(onLot?{onLot:true}:{})});
-  if(n===1){const pins=lot?lotPins(lot,s):[];return tpl.cps.map(([nm,tk],i)=>mk(nm,tk,pins[i],i===0&&lot&&lot.name,true))}
+  if(n===1)return drillList(mkId);
   if(n===2){let cur=s;const slots=['stop','stop','stop','play','allway','start'];
     return tpl.cps.map(([nm,tk],i)=>{const k=slots[i];if(k==='start')return mk(nm,tk,s);
       const f=k==='allway'?take(F.allway.length?F.allway:F.stop,cur):k==='play'?take(F.play,cur,100):take(F.stop,cur);
@@ -343,7 +347,7 @@ function offsetPoints(pts,mags){return pts.map((p,i)=>{const m=mags[i];if(!m)ret
   const a=pts[Math.max(0,i-1)],b=pts[Math.min(pts.length-1,i+1)];let dx=b[0]-a[0],dy=b[1]-a[1];const L2=Math.hypot(dx,dy)||1;dx/=L2;dy/=L2;
   return [p[0]-dy*m,p[1]+dx*m]})}
 
-const API={uid,esc,hav,bearing,angDiff,fmtDur,fmtDist,stageNum,median,GPS,acceptFix,smoothSpeed,thinTrack,placedCps,arrivals,nextTarget,skippedCps,
+const API={drillList,trackable,uid,esc,hav,bearing,angDiff,fmtDur,fmtDist,stageNum,median,GPS,acceptFix,smoothSpeed,thinTrack,placedCps,arrivals,nextTarget,skippedCps,
   skillPct,hours,badFlags,mistakeSeries,topMistakes,suggestNext,curfew,testEligibleFrom,parseMaxspeed,inBox,segDist,limitAt,
   overlapMask,offsetPoints,uTurns,roadAt,stickyLimit,isOneway,playZoneRoad,SAY,speakable,stopCheck,hardBrake,problemSpots,HEADS_UP,focusWeights,pickLoopTargets,trackSegments,LOOP_SKILLS,pathArrows,cumDist,projectOnPath,instruction,maneuvers,planDrive,spotSummary,SPOTS,polyArea,cluster,carLot,parseFeatures,rankLots,lotPins,walkRamp,buildStage};
 if(typeof module!=='undefined')module.exports=API;else Object.assign(root,API);

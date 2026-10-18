@@ -42,12 +42,12 @@ async function buildReport(s,tilesOn=true){
         jobs.push(loadImg(`https://tile.openstreetmap.org/${z}/${tx}/${ty}.png`).then(im=>c.drawImage(im,mx+tx*256-ox,my+ty*256-oy,256,256)).catch(()=>{}))}
       await Promise.all(jobs)}
     else{c.strokeStyle='#D9E1DB';c.lineWidth=1;for(let gx=mx;gx<mx+mw;gx+=60){c.beginPath();c.moveTo(gx,my);c.lineTo(gx,my+mh);c.stroke()}for(let gy=my;gy<my+mh;gy+=60){c.beginPath();c.moveTo(mx,gy);c.lineTo(mx+mw,gy);c.stroke()}}
-    const plan=s.plan&&s.plan.length>1?s.plan:cps.length>1?cps.map(p=>p.ll):null;if(plan){c.setLineDash([10,10]);c.strokeStyle=RC.caution;c.lineWidth=4;c.beginPath();plan.forEach((p,i)=>{const q=toC(p);i?c.lineTo(...q):c.moveTo(...q)});c.stroke();c.setLineDash([])}
+    const onMap=cps.filter(p=>p.ll),plan=s.plan&&s.plan.length>1?s.plan:onMap.length>1?onMap.map(p=>p.ll):null;if(plan){c.setLineDash([10,10]);c.strokeStyle=RC.caution;c.lineWidth=4;c.beginPath();plan.forEach((p,i)=>{const q=toC(p);i?c.lineTo(...q):c.moveTo(...q)});c.stroke();c.setLineDash([])}
     if(s.track?.length>1){c.lineJoin=c.lineCap='round';(s.gaps||[]).forEach(g=>{c.setLineDash([6,10]);c.strokeStyle='#8A958E';c.lineWidth=4;c.beginPath();c.moveTo(...toC(g.a));c.lineTo(...toC(g.b));c.stroke();c.setLineDash([])});
       c.beginPath();trackSegments(s.track,s.breaks).forEach(sg=>sg.forEach((p,i)=>{const q=toC(p);i?c.lineTo(...q):c.moveTo(...q)}));c.strokeStyle='#fff';c.lineWidth=11;c.stroke();
       c.strokeStyle=RC.track;c.lineWidth=6;c.stroke();const st0=toC(s.track[0]),en=toC(s.track[s.track.length-1]);
       pinDot(c,...st0,'S',RC.ink,'#fff',13);pinDot(c,...en,'F',RC.ink,'#fff',13)}
-    cps.forEach(p=>pinDot(c,...toC(p.ll),p.n,p.done?RC.ok:RC.caution,p.done?'#fff':'#1D1600'));
+    cps.filter(p=>p.ll).forEach(p=>pinDot(c,...toC(p.ll),p.n,p.done?RC.ok:RC.caution,p.done?'#fff':'#1D1600'));
     flags.forEach(f=>{const [x,y2]=toC(f.ll),g=FLAGS[f.label]?.good;c.fillStyle=g?RC.ok:RC.stop;rrect(c,x-15,y2-15,30,30,6);c.fill();c.lineWidth=3;c.strokeStyle='#fff';c.stroke();
       c.fillStyle='#fff';c.font=fnt(800,15,'m');c.textAlign='center';c.textBaseline='middle';c.fillText(g?'★':f.i,x,y2+1);c.textAlign='left';c.textBaseline='alphabetic'});
     if(tilesOn){c.fillStyle='rgba(255,255,255,.8)';c.fillRect(mx+mw-200,my+mh-26,200,26);c.fillStyle=RC.muted;c.font=fnt(400,13,'b');c.fillText('© OpenStreetMap contributors',mx+mw-190,my+mh-9)}
@@ -72,13 +72,13 @@ async function buildReport(s,tilesOn=true){
   if(good.length){c.fillStyle=RC.ok;c.font=fnt(700,24,'b');c.fillText(`★ Nice job marked ${good.length}×`,P,y);y+=44}
   y+=10;
   // checkpoints
-  if(cps.length){H('Checkpoints');cps.forEach(p=>{pinDot(c,P+17,y-8,p.n,p.done?RC.ok:RC.caution,p.done?'#fff':'#1D1600',16);
-    c.fillStyle=RC.ink;c.font=fnt(700,24,'b');c.fillText(p.name+(p.done?'':'  (missed)'),P+48,y);y+=30;
+  if(cps.length){H(cps.some(p=>p.ll)?'Checkpoints':'Practice list');cps.forEach(p=>{pinDot(c,P+17,y-8,p.n,p.done?RC.ok:RC.caution,p.done?'#fff':'#1D1600',16);
+    c.fillStyle=RC.ink;c.font=fnt(700,24,'b');c.fillText(p.name+(p.done?'':p.ll?'  (missed)':'  (not done)'),P+48,y);y+=30;
     if(p.task){c.fillStyle=RC.muted;c.font=fnt(400,20,'b');y=wrap(c,p.task,P+48,y,W-2*P-48,28)}y+=14});y+=10}
   // reminders
   H('Reminders for next time');const rem=[];
   gl.slice(0,3).forEach(([lab])=>FLAGS[lab]?.tip&&rem.push([lab,FLAGS[lab].tip]));
-  const missed=cps.filter(p=>!p.done);if(missed.length)rem.push(['Retry',`Go back to ${missed.map(p=>p.name).join(', ')} next lesson.`]);
+  const missed=cps.filter(p=>!p.done);if(missed.length)rem.push(['Retry',missed.some(p=>p.ll)?`Go back to ${missed.map(p=>p.name).join(', ')} next lesson.`:`Practise next time: ${missed.map(p=>p.name).join(', ')}.`]);
   if(!gl.length&&!missed.length&&s.feel>=4)rem.push(['Level up','Everything went well. Try the next stage next time.']);
   if(!rem.length)rem.push(['Keep going','Repeat this route once more to build confidence before moving on.']);
   rem.forEach(([k,t],i)=>{c.fillStyle=RC.caution;rrect(c,P,y-26,36,36,8);c.fill();c.fillStyle='#1D1600';c.font=fnt(800,20,'m');c.textAlign='center';c.fillText(i+1,P+18,y-1);c.textAlign='left';
