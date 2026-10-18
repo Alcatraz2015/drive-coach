@@ -1,0 +1,8 @@
+/* Self-hosted fonts (from @fontsource, SIL Open Font License), so no request goes to Google. */
+@font-face{font-family:'Atkinson Hyperlegible';font-style:normal;font-display:swap;font-weight:400;src:url(atkinson-hyperlegible-latin-400-normal.woff2) format('woff2')}
+@font-face{font-family:'Atkinson Hyperlegible';font-style:normal;font-display:swap;font-weight:700;src:url(atkinson-hyperlegible-latin-700-normal.woff2) format('woff2')}
+@font-face{font-family:'Overpass';font-style:normal;font-display:swap;font-weight:600;src:url(overpass-latin-600-normal.woff2) format('woff2')}
+@font-face{font-family:'Overpass';font-style:normal;font-display:swap;font-weight:800;src:url(overpass-latin-800-normal.woff2) format('woff2')}
+@font-face{font-family:'Overpass';font-style:normal;font-display:swap;font-weight:900;src:url(overpass-latin-900-normal.woff2) format('woff2')}
+@font-face{font-family:'Overpass Mono';font-style:normal;font-display:swap;font-weight:500;src:url(overpass-mono-latin-500-normal.woff2) format('woff2')}
+@font-face{font-family:'Overpass Mono';font-style:normal;font-display:swap;font-weight:700;src:url(overpass-mono-latin-700-normal.woff2) format('woff2')}

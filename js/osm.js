@@ -1,7 +1,7 @@
 /* Drive Coach: OpenStreetMap lookups (Overpass for road features, Nominatim for place search). */
 const OSM=(()=>{
   let lastSource='';
-  const SERVERS=['https://overpass-api.de/api/interpreter','https://maps.mail.ru/osm/tools/overpass/api/interpreter','https://overpass.private.coffee/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
+  const SERVERS=['https://overpass-api.de/api/interpreter','https://overpass.private.coffee/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
 
   /* ---- Local copy: data/osm/ is refreshed weekly by a GitHub Action and served from this site, so no outside server is needed. ---- */
   let idxP=null;const tiles=new Map();

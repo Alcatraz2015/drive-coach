@@ -99,7 +99,7 @@ async function deliver(blob,name){const file=new File([blob],name,{type:blob.typ
   if(navigator.canShare&&navigator.canShare({files:[file]})){try{await navigator.share({files:[file],title:'Lesson report'});return}catch(e){if(e.name==='AbortError')return}}
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000)}
 let jspdfP=null;function loadJsPDF(){return jspdfP=jspdfP||new Promise((res,rej)=>{if(window.jspdf)return res(window.jspdf);const sc=document.createElement('script');
-  sc.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';sc.onload=()=>res(window.jspdf);sc.onerror=()=>{jspdfP=null;rej()};document.head.appendChild(sc)})}
+  sc.src='vendor/jspdf/jspdf.umd.min.js';sc.onload=()=>res(window.jspdf);sc.onerror=()=>{jspdfP=null;rej()};document.head.appendChild(sc)})}
 const repName=(s,ext)=>`lesson-${new Date(s.start).toISOString().slice(0,10)}-${(s.routeName||'drive').toLowerCase().replace(/[^a-z0-9]+/g,'-')}.${ext}`;
 function renderReport(){const s=S.sessions.find(x=>x.id===reportView);if(!s){reportView=null;return render()}
   pane.innerHTML=`<div class="row" style="justify-content:space-between"><h2>Lesson report</h2><button class="btn" id="repClose">Close</button></div>
