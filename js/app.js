@@ -80,6 +80,9 @@ async function preloadPath(g){if(!baseVector||!g||g.length<2)return;const key=g.
 function initMap(){
   map=L.map('map',{zoomControl:false,attributionControl:true}).setView(curArea().c,curArea().z);
   addBaseMap();dark.addEventListener?.('change',()=>{addBaseMap();drawRoute()});
+  // The panel below the map changes height (tabs, lesson view, big map). Re-measure the map every time,
+  // so centring on the route or the car uses the part of the map you can actually see.
+  if(window.ResizeObserver)new ResizeObserver(()=>map.invalidateSize({pan:false})).observe(document.getElementById('map'));
   cpLayer=L.layerGroup().addTo(map);histLayer=L.layerGroup().addTo(map);flagLayer=L.layerGroup().addTo(map);lotLayer=L.layerGroup().addTo(map);
   trackLine=L.polyline([],{color:'#2F7DE1',weight:5,opacity:.85}).addTo(map);
   map.on('click',onMapClick);
@@ -154,7 +157,7 @@ function turnaroundNote(r){const pts=placedCps(r.cps).map(c=>[c.lat,c.lng]);if(r
   const near=us.map(u=>{let bi=0,bd=1e9;placedCps(r.cps).forEach((c,i)=>{const d=hav(u.ll,[c.lat,c.lng]);if(d<bd){bd=d;bi=i}});return bi+1});
   return `<div class="card warn small"><b>${us.length===1?'This route has a turnaround':'This route has '+us.length+' turnarounds'} (↶ on the map)</b> near pin ${[...new Set(near)].join(', ')}. That usually means a pin sits on a side street or dead end. Drag it onto the street you'll drive through, or change the order with ↑ ↓.</div>`}
 const pathLine=r=>{const pts=placedCps(r.cps).map(c=>[c.lat,c.lng]);return r.path&&pts.length>1&&r.path.key===pathKey(pts)?`${r.path.km} km by road · about ${r.path.min} min`:''};
-function fitRoute(){const r=route(),pts=r.cps.filter(c=>c.lat!=null).map(c=>[c.lat,c.lng]);if(r.lot)pts.push(...(r.lot.g||[r.lot.ll]));
+function fitRoute(){map.invalidateSize({pan:false});const r=route(),pts=r.cps.filter(c=>c.lat!=null).map(c=>[c.lat,c.lng]);if(r.lot)pts.push(...(r.lot.g||[r.lot.ll]));
   if(sess&&sess.track.length)pts.push(...sess.track);
   if(pts.length===1)map.setView(pts[0],16);else if(pts.length)map.fitBounds(pts,{padding:[40,40]});else{map.setView(curArea().c,curArea().z);toast(stageNum(r)===1?'Pick a parking lot first.':'No pins yet. Place them in Routes.')}}
 
@@ -329,7 +332,7 @@ let sess=null,ending=false,tick=null,hudTimer=null,wake=null,expanded=false,pres
 let endForm={feel:0,notes:''};const flagMarkers=new Map();
 function newSession(){brakePrev=null;stopState.clear();spotWarned.clear();spotList=problemSpots(S.sessions);navState.hint=null;navState.off=0;navState.said={};navState.next=null;return {id:uid(),start:Date.now(),routeId:route().id,track:[],breaks:[],gaps:[],km:0,maxKmh:0,kmh:0,done:[],flags:[],announced:[],nextDist:null}}
 async function grabWake(){try{if(!wake)wake=await navigator.wakeLock?.request('screen');wake?.addEventListener?.('release',()=>{wake=null})}catch(e){}}
-function beginRunning(){ensureWatch();follow=true;userPanAt=0;zoomAt=0;document.getElementById('locBtn').setAttribute('aria-pressed','true');if(lastFix)map.setView(lastFix.ll,17);
+function beginRunning(){ensureWatch();follow=true;userPanAt=0;zoomAt=0;document.getElementById('locBtn').setAttribute('aria-pressed','true');if(lastFix)setTimeout(()=>{map.invalidateSize({pan:false});map.setView(lastFix.ll,17)},80);
   grabWake();clearInterval(tick);tick=setInterval(()=>{if(tab==='drive')updateHud();persistActive()},5000);
   if(!hudTimer)hudTimer=setInterval(()=>sess&&tab==='drive'&&updateHud(),1000);
   document.getElementById('voiceBtn').hidden=false;syncVoiceBtn();drawRoute();render()}
@@ -875,7 +878,7 @@ pane.addEventListener('input',e=>{const t=e.target,r=route();
 pane.addEventListener('keydown',e=>{if(e.key!=='Enter')return;if(e.target.id==='placeQ'){e.preventDefault();placeSearch(e.target.value)}if(e.target.id==='destQ'){e.preventDefault();destSearch(e.target.value)}if(e.target.id==='testQ'){e.preventDefault();testSearch(e.target.value)}});
 document.getElementById('importFile').onchange=e=>{const f=e.target.files[0];if(f)restore(f);e.target.value=''};
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;reportView=null;prestart=false;if(lotPick)cancelLotPick();syncTabs();if(tab!=='routes')setPlacing(false);render()});
-document.getElementById('locBtn').onclick=e=>{if(!ensureWatch())return;follow=!follow;e.currentTarget.setAttribute('aria-pressed',follow);if(follow&&lastFix)map.setView(lastFix.ll,17)};
+document.getElementById('locBtn').onclick=e=>{if(!ensureWatch())return;follow=!follow;e.currentTarget.setAttribute('aria-pressed',follow);if(follow&&lastFix){map.invalidateSize({pan:false});map.setView(lastFix.ll,17)}};
 document.getElementById('fitBtn').onclick=()=>fitRoute();
 document.getElementById('bigBtn').onclick=()=>toggleBig();
 document.getElementById('voiceBtn').onclick=()=>{S.settings.voice=!S.settings.voice;save();syncVoiceBtn();if(S.settings.voice){unlockAudio();say('Voice on')}else hush();toast(S.settings.voice?'Voice prompts on':'Voice prompts off')};

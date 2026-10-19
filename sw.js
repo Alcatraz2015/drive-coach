@@ -1,7 +1,7 @@
 /* Drive Coach service worker: makes the app open without signal after the first visit.
    App files: network first (so updates arrive right away), cached copy when offline.
    Libraries and fonts: cache first. Map tiles: cached as you view them, newest 2000 kept. */
-const V='dc-v19', SHELL=['./','index.html','css/app.css','js/data.js','js/logic.js','js/store.js','js/mapstyle.js','js/osm.js','js/report.js','js/app.js','manifest.webmanifest','icons/icon-192.png','vendor/fonts/fonts.css','vendor/leaflet/leaflet.css','vendor/leaflet/leaflet.js','vendor/maplibre/maplibre-gl.css','vendor/maplibre/maplibre-gl.js','vendor/maplibre/leaflet-maplibre-gl.js'];
+const V='dc-v20', SHELL=['./','index.html','css/app.css','js/data.js','js/logic.js','js/store.js','js/mapstyle.js','js/osm.js','js/report.js','js/app.js','manifest.webmanifest','icons/icon-192.png','vendor/fonts/fonts.css','vendor/leaflet/leaflet.css','vendor/leaflet/leaflet.js','vendor/maplibre/maplibre-gl.css','vendor/maplibre/maplibre-gl.js','vendor/maplibre/leaflet-maplibre-gl.js'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(V).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==V&&k!=='dc-tiles'&&k!=='dc-vmap').map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 async function trimVmap(c){const ks=await c.keys();if(ks.length>5000)await Promise.all(ks.slice(0,ks.length-5000).map(k=>c.delete(k)))}
