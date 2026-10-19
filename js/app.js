@@ -605,7 +605,8 @@ function renderDriving(){const r=route(),nx=nextTarget(r.cps,sess.done),placed=p
 /* Lot lesson: big tappable practice list, tap again to untick. */
 function renderPractice(r){const list=r.cps.filter(c=>c.drill),done=list.filter(c=>sess.done.includes(c.id)).length,now=list.find(c=>!sess.done.includes(c.id));
   return `<div class="dhud"><div class="spd" id="hSpd"><b id="hSpeed">0</b><span>km/h</span></div><div class="limit" id="hLimit" hidden></div>
-     <div class="dnext"><div class="small muted">Practice · ${done} of ${list.length} done</div><div class="nm">${now?esc(now.name):'All done'}</div>${now?'':'<div class="small muted">End the lesson when ready</div>'}</div></div>
+     <div class="dnext"><div class="small muted">Practice · ${done} of ${list.length} done</div><div class="nm">${now?esc(now.name):'All done 🎉'}</div></div></div>
+   ${now?'':'<button class="btn primary big" id="finishBtn">Finish lesson</button>'}
    <div class="drills">${list.map(c=>{const on=sess.done.includes(c.id);return `<button class="drill ${on?'on':''} ${now&&now.id===c.id?'now':''}" data-drill="${c.id}" aria-pressed="${on}"><span class="tick">${on?'✓':''}</span><span><b>${esc(c.name)}</b><span class="small">${esc(c.task)}</span></span></button>`}).join('')}</div>
    <div class="markrow" role="group" aria-label="Mark a moment">${Object.keys(FLAGS).map(t=>`<button class="chip ${FLAGS[t].good?'good':''}" data-flag="${esc(t)}">${t}</button>`).join('')}</div>
    <div class="dbar"><span></span><button class="btn" id="moreBtn">More</button><button class="btn stopbtn" id="endBtn">End</button></div>
@@ -781,7 +782,7 @@ pane.addEventListener('click',async e=>{const pt=e.target.closest('[data-pt]');i
   if(id==='preCancel'){prestart=false;return render()}
   if(id==='moreBtn'){expanded=true;return render()}
   if(id==='lessBtn'){expanded=false;return render()}
-  if(id==='endBtn'){ending=true;persistActive();return render()}
+  if(id==='endBtn'||id==='finishBtn'){ending=true;persistActive();return render()}
   if(id==='backDrive'){ending=false;persistActive();return render()}
   if(id==='saveSess')return finishSession(true);
   if(id==='discardSess'){if(confirmTap(t,'Tap again to discard'))finishSession(false);return}
